@@ -16,7 +16,7 @@ func (db *Database) Exec(sql string, args ...any) (pgconn.CommandTag, error) {
 	ctx := context.Background()
 	ctxto, _ := context.WithTimeout(ctx, 10*time.Second)
 	// defer cancel()
-	db.log.Debug("Database.Exec", "sql", sql, "args", args)
+	db.log.Debug("Database.Exec", "sql", sql)
 	return db.pool.Exec(ctxto, sql, args...)
 }
 
@@ -24,7 +24,7 @@ func (db *Database) Query(sql string, args ...any) (pgx.Rows, error) {
 	ctx := context.Background()
 	ctxto, _ := context.WithTimeout(ctx, 10*time.Second)
 	// defer cancel()
-	db.log.Debug("Database.Query", "sql", sql, "args", args)
+	db.log.Debug("Database.Query", "sql", sql)
 	return db.pool.Query(ctxto, sql, args...)
 }
 
@@ -32,7 +32,7 @@ func (db *Database) QueryRow(sql string, args ...any) pgx.Row {
 	ctx := context.Background()
 	ctxto, _ := context.WithTimeout(ctx, 10*time.Second)
 	// defer cancel()
-	db.log.Debug("Database.QueryRow", "sql", sql, "args", args)
+	db.log.Debug("Database.QueryRow", "sql", sql)
 	return db.pool.QueryRow(ctxto, sql, args...)
 }
 
