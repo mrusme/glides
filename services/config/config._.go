@@ -2,6 +2,7 @@ package config
 
 import (
 	"net/url"
+	"sync/atomic"
 
 	"github.com/knadh/koanf/parsers/toml/v2"
 	"github.com/knadh/koanf/providers/file"
@@ -12,8 +13,9 @@ import (
 
 type Config struct {
 	cfgstr   string
-	k        *koanf.Koanf
+	k        atomic.Pointer[koanf.Koanf]
 	provider koanf.Provider
+	onError  func(error)
 }
 
 func New(
@@ -27,25 +29,46 @@ func New(
 		return nil, err
 	}
 
-	cfg.k = koanf.New(".")
 	cfg.provider = file.Provider(path)
 
-	if err = cfg.k.Load(cfg.provider, toml.Parser()); err != nil {
+	if err = cfg.load(); err != nil {
 		return nil, err
 	}
 
 	return cfg, nil
 }
 
+func (cfg *Config) load() (err error) {
+	k := koanf.New(".")
+	if err = k.Load(cfg.provider, toml.Parser()); err != nil {
+		return err
+	}
+
+	cfg.k.Store(k)
+
+	return nil
+}
+
+func (cfg *Config) OnReloadError(fn func(error)) {
+	cfg.onError = fn
+}
+
+func (cfg *Config) reloadFailed(err error) {
+	if cfg.onError != nil {
+		cfg.onError(err)
+	}
+}
+
 func (cfg *Config) Startup() (err error) {
 	cfg.provider.(*file.File).Watch(func(event interface{}, werr error) {
 		if werr != nil {
-			// TODO: Handle error
+			cfg.reloadFailed(werr)
 			return
 		}
 
-		cfg.k = koanf.New(".")
-		cfg.k.Load(cfg.provider, toml.Parser())
+		if lerr := cfg.load(); lerr != nil {
+			cfg.reloadFailed(lerr)
+		}
 	})
 
 	return nil
@@ -57,7 +80,7 @@ func (cfg *Config) Shutdown() error {
 }
 
 func (cfg *Config) Koanf() *koanf.Koanf {
-	return cfg.k
+	return cfg.k.Load()
 }
 
 func (cfg *Config) parseCfgstr() (path string, err error) {
@@ -80,10 +103,10 @@ func (cfg *Config) parseCfgstr() (path string, err error) {
 }
 
 func (cfg *Config) Strings(v string) []string {
-	return cfg.k.Strings(v)
+	return cfg.k.Load().Strings(v)
 }
 
 func (cfg *Config) Unmarshal(path string, o any) (x any, err error) {
-	err = cfg.k.Unmarshal(path, o)
+	err = cfg.k.Load().Unmarshal(path, o)
 	return o, err
 }

@@ -52,7 +52,7 @@ func (qo QueryOptions) Query(
 	}
 
 	if len(wheres) > 0 {
-		if strings.Index(query, "WHERE") == -1 {
+		if !hasTopLevelWhere(query) {
 			q = fmt.Sprintf("%s WHERE ", query)
 		} else {
 			q = fmt.Sprintf("%s AND ", query)
@@ -77,6 +77,49 @@ func (qo QueryOptions) Query(
 	}
 
 	return q
+}
+
+func hasTopLevelWhere(query string) bool {
+	depth := 0
+	var quote byte
+
+	for i := 0; i < len(query); i++ {
+		c := query[i]
+
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '(':
+			depth++
+		case ')':
+			depth--
+		}
+
+		if depth != 0 || i+5 > len(query) || !strings.EqualFold(query[i:i+5], "WHERE") {
+			continue
+		}
+		if i > 0 && isIdentifierByte(query[i-1]) {
+			continue
+		}
+		if i+5 < len(query) && isIdentifierByte(query[i+5]) {
+			continue
+		}
+
+		return true
+	}
+
+	return false
+}
+
+func isIdentifierByte(c byte) bool {
+	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 func (qo QueryOptions) getColumn(

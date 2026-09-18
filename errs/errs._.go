@@ -15,6 +15,9 @@ var (
 	ErrNoRows error = errors.New(
 		"no_rows",
 	)
+	ErrDatabaseNotStarted error = errors.New(
+		"err_database_not_started",
+	)
 	ErrUniqueViolationOn error = errors.New(
 		"unique_violation_on",
 	)

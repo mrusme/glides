@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -15,10 +14,11 @@ import (
 )
 
 const (
-	HashMem    = 64 * 1024
-	HashIter   = 3
-	HashSaltln = 16
-	HashKeyln  = 32
+	HashMem         = 64 * 1024
+	HashIter        = 3
+	HashParallelism = 4
+	HashSaltln      = 16
+	HashKeyln       = 32
 )
 
 type Params struct {
@@ -110,14 +110,12 @@ func Hash(password string) (encoded string, err error) {
 		return "", err
 	}
 
-	parallelism := uint8(runtime.NumCPU())
-
 	key := argon2.IDKey(
 		[]byte(password),
 		salt,
 		HashIter,
 		HashMem,
-		parallelism,
+		HashParallelism,
 		HashKeyln,
 	)
 
@@ -129,7 +127,7 @@ func Hash(password string) (encoded string, err error) {
 		argon2.Version,
 		HashMem,
 		HashIter,
-		parallelism,
+		HashParallelism,
 		b64Salt,
 		b64Key,
 	), nil

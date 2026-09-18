@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -11,12 +12,7 @@ import (
 	"strings"
 
 	"xn--gckvb8fzb.com/glides/services/config"
-	"xn--gckvb8fzb.com/glides/services/cron"
 	"xn--gckvb8fzb.com/glides/services/database"
-	"xn--gckvb8fzb.com/glides/services/dispatch"
-	"xn--gckvb8fzb.com/glides/services/intnat"
-	"xn--gckvb8fzb.com/glides/services/markdown"
-	"xn--gckvb8fzb.com/glides/services/storage"
 )
 
 type Build struct {
@@ -26,13 +22,9 @@ type Build struct {
 	hash    string
 }
 
-type Services struct {
-	Database bool
-	Storage  bool
-	Intnat   bool
-	Markdown bool
-	Dispatch bool
-	Cron     bool
+type Service interface {
+	Startup() error
+	Shutdown() error
 }
 
 type Hook func() error
@@ -42,6 +34,7 @@ type Runtime struct {
 	embeds map[string]*embed.FS
 
 	services map[string]any
+	order    []string
 
 	loggerLevel slog.Level
 	logger      *slog.Logger
@@ -61,7 +54,7 @@ type Opts struct {
 	Version  string
 	Commit   string
 	Date     string
-	Services Services
+	Database bool
 }
 
 func New(opts Opts) (rt *Runtime, err error) {
@@ -96,9 +89,13 @@ func New(opts Opts) (rt *Runtime, err error) {
 
 	rt.ALogger = NewAsyncLogger(rt.Logger())
 
+	rt.Config().OnReloadError(func(rerr error) {
+		rt.Logger().Error("Config.Reload", "status", "error", "error", rerr)
+	})
+
 	rt.Debug("status", "exec")
 
-	if opts.Services.Database {
+	if opts.Database {
 		rt.Debug("new", "database")
 		if srv, err = database.New(
 			rt.Logger(),
@@ -108,69 +105,6 @@ func New(opts Opts) (rt *Runtime, err error) {
 			return nil, err
 		}
 		rt.AddService("_database", srv)
-	}
-
-	if opts.Services.Storage {
-		rt.Debug("new", "storagescfg")
-		storagesCfg, err := rt.Config().Storages()
-		if err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.Debug("new", "storage")
-		if srv, err = storage.New(storagesCfg); err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.AddService("_storage", srv)
-	}
-
-	if opts.Services.Intnat {
-		rt.Debug("new", "intnat")
-		if srv, err = intnat.New(); err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.AddService("_intnat", srv)
-	}
-
-	if opts.Services.Markdown {
-		rt.Debug("new", "markdown")
-		if srv, err = markdown.New(); err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.AddService("_markdown", srv)
-	}
-
-	if opts.Services.Dispatch {
-		rt.Debug("new", "rediscfg")
-		redisCfg, err := rt.Config().Redis()
-		if err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.Debug("new", "targets")
-		targetsCfg, err := rt.Config().Targets()
-		if err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.Debug("new", "dispatch")
-		if srv, err = dispatch.New(redisCfg, targetsCfg); err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.AddService("_dispatch", srv)
-	}
-
-	if opts.Services.Cron {
-		rt.Debug("new", "cron")
-		if srv, err = cron.New(); err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.AddService("_cron", srv)
 	}
 
 	rt.Info("status", "ok")
@@ -202,7 +136,7 @@ func (rt *Runtime) GetLogLevel() (lvl slog.Level) {
 
 func (rt *Runtime) NilOrDie(err error) {
 	if err != nil {
-		fn := rt.getLogFnName()
+		fn := rt.getLogFnName(2)
 		rt.Logger().Error(fn, "error", err)
 		rt.Exit(1)
 	}
@@ -213,8 +147,8 @@ func (rt *Runtime) Exit(code int) {
 	os.Exit(code)
 }
 
-func (rt *Runtime) getLogFnName() string {
-	pc, _, _, ok := runt.Caller(2)
+func (rt *Runtime) getLogFnName(skip int) string {
+	pc, _, _, ok := runt.Caller(skip)
 	if !ok {
 		return "Unknown"
 	}
@@ -279,24 +213,29 @@ func trimClosures(name string) string {
 	}
 }
 
+func (rt *Runtime) log(level slog.Level, args []any) {
+	logger := rt.Logger()
+	if !logger.Enabled(context.Background(), level) {
+		return
+	}
+
+	logger.Log(context.Background(), level, rt.getLogFnName(3), args...)
+}
+
 func (rt *Runtime) Debug(args ...any) {
-	fn := rt.getLogFnName()
-	rt.Logger().Debug(fn, args...)
+	rt.log(slog.LevelDebug, args)
 }
 
 func (rt *Runtime) Info(args ...any) {
-	fn := rt.getLogFnName()
-	rt.Logger().Info(fn, args...)
+	rt.log(slog.LevelInfo, args)
 }
 
 func (rt *Runtime) Warn(args ...any) {
-	fn := rt.getLogFnName()
-	rt.Logger().Warn(fn, args...)
+	rt.log(slog.LevelWarn, args)
 }
 
 func (rt *Runtime) Error(args ...any) {
-	fn := rt.getLogFnName()
-	rt.Logger().Error(fn, args...)
+	rt.log(slog.LevelError, args)
 }
 
 func (rt *Runtime) computeBuildHash(args ...string) string {

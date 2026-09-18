@@ -12,6 +12,7 @@ import (
 	"xn--gckvb8fzb.com/glides/models/asyncjob/cron/cronrun"
 	"xn--gckvb8fzb.com/glides/runtime"
 	"xn--gckvb8fzb.com/glides/services/config"
+	servicescron "xn--gckvb8fzb.com/glides/services/cron"
 	"xn--gckvb8fzb.com/glides/services/dispatch"
 )
 
@@ -64,7 +65,7 @@ func (crn *Cron) Run() (err error) {
 		return err
 	}
 
-	crn.rt.Info("status", "ok", "entries", len(crn.rt.Cron().Entries()))
+	crn.rt.Info("status", "ok", "entries", len(servicescron.From(crn.rt).Entries()))
 
 	crn.schedule()
 
@@ -104,7 +105,7 @@ func (crn *Cron) schedule() {
 }
 
 func (crn *Cron) tick(now time.Time) {
-	for _, entry := range crn.rt.Cron().Entries() {
+	for _, entry := range servicescron.From(crn.rt).Entries() {
 		next, ok := crn.next[entry.ID]
 		if !ok {
 			crn.next[entry.ID] = entry.Schedule.Next(now)
@@ -123,7 +124,7 @@ func (crn *Cron) tick(now time.Time) {
 func (crn *Cron) dispatch(id string, scheduledAt time.Time) {
 	crn.rt.Debug("dispatch", id, "scheduled_at", scheduledAt)
 
-	if err := crn.rt.Dispatch().CronRun(
+	if err := dispatch.From(crn.rt).CronRun(
 		cronrun.New(id, scheduledAt),
 	); err != nil {
 		crn.rt.Error("error", err)
@@ -146,7 +147,7 @@ func (crn *Cron) HandleJob(ctx context.Context, t *asynq.Task) (err error) {
 		return err
 	}
 
-	entry, ok := crn.rt.Cron().Get(payload.FunctionID)
+	entry, ok := servicescron.From(crn.rt).Get(payload.FunctionID)
 	if !ok {
 		return fmt.Errorf("%w: %s",
 			errs.ErrCronFunctionIDNotFound, payload.FunctionID)

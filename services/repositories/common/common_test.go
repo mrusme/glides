@@ -77,3 +77,35 @@ func TestQueryTableIdentifier(t *testing.T) {
 		t.Errorf("expected unqualified fallback column, got %q", got)
 	}
 }
+
+func TestHasTopLevelWhere(t *testing.T) {
+	for query, want := range map[string]bool{
+		"SELECT * FROM users":                                              false,
+		"SELECT * FROM users WHERE id = $1":                                true,
+		"select * from users where id = $1":                                true,
+		"SELECT * FROM users\n\t\t\tWHERE id = $1":                         true,
+		"SELECT * FROM (SELECT * FROM users WHERE id = $1) AS u":           false,
+		"SELECT * FROM (SELECT * FROM users WHERE id = $1) AS u WHERE u.x": true,
+		"SELECT somewhere FROM places":                                     false,
+		"SELECT where_clause FROM rules":                                   false,
+		"SELECT * FROM notes WHERE body = 'no WHERE here'":                 true,
+		"SELECT 'WHERE' AS word FROM notes":                                false,
+		`SELECT "WHERE" FROM notes`:                                        false,
+		"SELECT * FROM t WHERE":                                            true,
+	} {
+		if got := hasTopLevelWhere(query); got != want {
+			t.Errorf("hasTopLevelWhere(%q) = %v, want %v", query, got, want)
+		}
+	}
+}
+
+func TestQueryAppendsToASubquery(t *testing.T) {
+	got := QueryOptions{}.Query(
+		"SELECT * FROM (SELECT * FROM users WHERE banned_at IS NULL) AS u",
+		QueryCapabilities{HasDeleted: true},
+	)
+	want := "SELECT * FROM (SELECT * FROM users WHERE banned_at IS NULL) AS u WHERE  deleted_at IS NULL"
+	if got != want {
+		t.Errorf("Query = %q, want %q", got, want)
+	}
+}

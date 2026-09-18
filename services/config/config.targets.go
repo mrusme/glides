@@ -53,6 +53,6 @@ func (t Target) Serves(channel string) bool {
 type Targets []Target
 
 func (cfg *Config) Targets() (targets Targets, err error) {
-	err = cfg.k.Unmarshal("Target", &targets)
+	err = cfg.k.Load().Unmarshal("Target", &targets)
 	return targets, err
 }

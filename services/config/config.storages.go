@@ -25,6 +25,6 @@ type StorageLocal struct {
 type Storages []Storage
 
 func (cfg *Config) Storages() (storages Storages, err error) {
-	err = cfg.k.Unmarshal("Storage", &storages)
+	err = cfg.k.Load().Unmarshal("Storage", &storages)
 	return storages, err
 }
