@@ -2,6 +2,7 @@ package intnat
 
 import (
 	"embed"
+	"strings"
 
 	"github.com/kaptinlin/go-i18n"
 
@@ -47,10 +48,22 @@ func (in *Intnat) SetLocales(
 	return nil
 }
 
+func additional(defaultLocale string, locales []string) (rest []string) {
+	for _, locale := range locales {
+		if strings.EqualFold(locale, defaultLocale) {
+			continue
+		}
+
+		rest = append(rest, locale)
+	}
+
+	return rest
+}
+
 func (in *Intnat) Startup() (err error) {
 	if in.Bundle, err = i18n.NewBundle(
-		i18n.WithDefaultLocale(in.defaultLocale),
-		i18n.WithLocales(in.locales...),
+		in.defaultLocale,
+		i18n.WithLocales(additional(in.defaultLocale, in.locales)...),
 		i18n.WithUnmarshaler(toml.Unmarshal),
 	); err != nil {
 		return err
