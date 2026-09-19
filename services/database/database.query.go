@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -103,13 +105,41 @@ func (db *Database) ConvertError(err error) error {
 	}
 
 	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case pgerrcode.UniqueViolation:
+		switch {
+		case pgErr.Code == pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w_%s", errs.ErrUniqueViolationOn, pgErr.ConstraintName)
+		case isUnavailableCode(pgErr.Code):
+			return fmt.Errorf("%w: %w", errs.ErrUnavailable, err)
 		default:
 			return err
 		}
-	} else {
-		return err
 	}
+
+	if isUnavailable(err) {
+		return fmt.Errorf("%w: %w", errs.ErrUnavailable, err)
+	}
+
+	return err
+}
+
+func isUnavailableCode(code string) bool {
+	return pgerrcode.IsConnectionException(code) ||
+		pgerrcode.IsInsufficientResources(code) ||
+		pgerrcode.IsOperatorIntervention(code) ||
+		pgerrcode.IsTransactionRollback(code) ||
+		code == pgerrcode.LockNotAvailable
+}
+
+func isUnavailable(err error) bool {
+	var connectErr *pgconn.ConnectError
+	var netErr net.Error
+
+	return errors.Is(err, errs.ErrUnavailable) ||
+		errors.Is(err, errs.ErrDatabaseNotStarted) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.As(err, &connectErr) ||
+		errors.As(err, &netErr) ||
+		pgconn.Timeout(err)
 }

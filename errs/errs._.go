@@ -21,6 +21,9 @@ var (
 	ErrUniqueViolationOn error = errors.New(
 		"unique_violation_on",
 	)
+	ErrUnavailable error = errors.New(
+		"err_unavailable",
+	)
 	ErrHashInvalid error = errors.New(
 		"err_hash_invalid",
 	)

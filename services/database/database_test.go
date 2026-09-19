@@ -3,13 +3,16 @@ package database
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"xn--gckvb8fzb.com/glides/errs"
 )
 
@@ -56,6 +59,51 @@ type fakeRow struct{ scanned bool }
 func (r *fakeRow) Scan(...any) error {
 	r.scanned = true
 	return nil
+}
+
+func TestConvertErrorMarksWhatATryLaterCanFix(t *testing.T) {
+	db := new(Database)
+
+	for name, err := range map[string]error{
+		"a deadline":             context.DeadlineExceeded,
+		"a wrapped deadline":     fmt.Errorf("acquire: %w", context.DeadlineExceeded),
+		"a closed connection":    io.ErrUnexpectedEOF,
+		"a failed connect":       &pgconn.ConnectError{},
+		"a network error":        &net.OpError{Op: "dial", Err: errors.New("connection refused")},
+		"a database not started": errs.ErrDatabaseNotStarted,
+		"an admin shutdown":      &pgconn.PgError{Code: "57P01"},
+		"a full disk":            &pgconn.PgError{Code: "53100"},
+		"too many connections":   &pgconn.PgError{Code: "53300"},
+		"a deadlock":             &pgconn.PgError{Code: "40P01"},
+		"a cancelled statement":  &pgconn.PgError{Code: "57014"},
+	} {
+		converted := db.ConvertError(err)
+		if !errors.Is(converted, errs.ErrUnavailable) {
+			t.Errorf("%s isn't marked unavailable: %v", name, converted)
+		}
+		if !errors.Is(converted, err) && !errors.As(converted, new(*pgconn.PgError)) {
+			t.Errorf("%s lost its cause: %v", name, converted)
+		}
+	}
+
+	for name, err := range map[string]error{
+		"a syntax error":       &pgconn.PgError{Code: "42601"},
+		"a check violation":    &pgconn.PgError{Code: "23514"},
+		"a cancelled request":  context.Canceled,
+		"an error of the code": errors.New("scan: wrong type"),
+	} {
+		if converted := db.ConvertError(err); errors.Is(converted, errs.ErrUnavailable) {
+			t.Errorf("%s is marked unavailable: %v", name, converted)
+		}
+	}
+
+	if got := db.ConvertError(pgx.ErrNoRows); got != errs.ErrNoRows {
+		t.Errorf("no rows became %v", got)
+	}
+	unique := db.ConvertError(&pgconn.PgError{Code: "23505", ConstraintName: "users_username_key"})
+	if !errors.Is(unique, errs.ErrUniqueViolationOn) {
+		t.Errorf("a unique violation became %v", unique)
+	}
 }
 
 func TestResultsReleaseTheirContext(t *testing.T) {
