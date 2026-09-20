@@ -37,7 +37,6 @@ type Runtime struct {
 	order    []string
 
 	loggerLevel slog.Level
-	logger      *slog.Logger
 	ALogger     AsyncLogger
 
 	onStartup  []Hook
@@ -164,11 +163,11 @@ func (rt *Runtime) getLogFnName(skip int) string {
 		return fullSplit[0]
 	} else if fSL > 1 {
 		pkg := fullSplit[fSL-2]
-		if strings.Index(pkg, "/") > -1 {
+		if strings.Contains(pkg, "/") {
 			pkgs := strings.Split(pkg, "/")
 			pkg = pkgs[len(pkgs)-1]
 		}
-		if strings.Index(pkg, "(") > -1 {
+		if strings.Contains(pkg, "(") {
 			pkg = strings.ReplaceAll(pkg, "(", "")
 			pkg = strings.ReplaceAll(pkg, ")", "")
 			pkg = strings.ReplaceAll(pkg, "*", "")
@@ -246,9 +245,5 @@ func (rt *Runtime) computeBuildHash(args ...string) string {
 }
 
 func (rt *Runtime) IsDevelopmentMode() bool {
-	if rt.Config().GeneralMode() == ModeDevelopment {
-		return true
-	}
-
-	return false
+	return rt.Config().GeneralMode() == ModeDevelopment
 }

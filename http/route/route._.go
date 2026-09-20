@@ -31,7 +31,7 @@ func (r Route) AsURL() string {
 
 func (r Route) AsID() string {
 	joined := strings.Join([]string(r.Hierarchy), "_")
-	if strings.Index(joined, ":") > -1 {
+	if strings.Contains(joined, ":") {
 		return ""
 	}
 	return joined
