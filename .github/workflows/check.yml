@@ -1,0 +1,35 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+
+    - name: Format
+      run: make fmt
+
+    - name: Vet
+      if: ${{ !cancelled() }}
+      run: make vet
+
+    - name: Staticcheck
+      if: ${{ !cancelled() }}
+      run: make lint
+
+    - name: Test
+      if: ${{ !cancelled() }}
+      run: make test-race
+
+    - name: Govulncheck
+      if: ${{ !cancelled() }}
+      run: make vulncheck
