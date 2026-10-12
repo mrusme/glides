@@ -91,6 +91,10 @@ func (db *Database) QueryRow(
 }
 
 func (db *Database) ConvertError(err error) error {
+	return ConvertError(err)
+}
+
+func ConvertError(err error) error {
 	if err == nil {
 		return err
 	}
