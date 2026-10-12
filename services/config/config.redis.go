@@ -1,5 +1,7 @@
 package config
 
+import "log/slog"
+
 type Redis struct {
 	Addrs      []string `koanf:"Addresses"`
 	Database   int      `koanf:"Database"`
@@ -7,6 +9,7 @@ type Redis struct {
 	Username   string   `koanf:"Username"`
 	Password   string   `koanf:"Password"`
 	Poolsize   int      `koanf:"Poolsize"`
+	Reset      bool     `koanf:"Reset"`
 }
 
 func (cfg *Config) Redis() (r Redis, err error) {
@@ -14,30 +17,13 @@ func (cfg *Config) Redis() (r Redis, err error) {
 	return r, err
 }
 
-func (cfg *Config) RedisAddresses() []string {
-	return cfg.k.Load().Strings("Redis.Addresses")
-}
-
-func (cfg *Config) RedisMasterName() string {
-	return cfg.k.Load().String("Redis.MasterName")
-}
-
-func (cfg *Config) RedisUsername() string {
-	return cfg.k.Load().String("Redis.Username")
-}
-
-func (cfg *Config) RedisPassword() string {
-	return cfg.k.Load().String("Redis.Password")
-}
-
-func (cfg *Config) RedisDatabase() int {
-	return cfg.k.Load().Int("Redis.Database")
-}
-
-func (cfg *Config) RedisReset() bool {
-	return cfg.k.Load().Bool("Redis.Reset")
-}
-
-func (cfg *Config) RedisPoolsize() int {
-	return cfg.k.Load().Int("Redis.Poolsize")
+func (r Redis) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Any("addresses", r.Addrs),
+		slog.Int("database", r.Database),
+		slog.String("master_name", r.MasterName),
+		slog.String("username", r.Username),
+		slog.Int("poolsize", r.Poolsize),
+		slog.Bool("reset", r.Reset),
+	)
 }

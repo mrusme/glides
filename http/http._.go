@@ -5,11 +5,7 @@ import (
 	"xn--gckvb8fzb.com/glides/runtime"
 )
 
-type Iface interface {
-	Startup() error
-	Run() error
-	Shutdown() error
-}
+type Iface = runtime.IProcess
 
 type HTTP struct {
 	rt    *runtime.Runtime

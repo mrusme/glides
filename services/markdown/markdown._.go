@@ -21,7 +21,7 @@ func extensions() goldmark.Option {
 		extension.TaskList,
 		extension.NewTable(),
 		highlighting.NewHighlighting(
-			// https://xyproto.github.io/splash/docs/
+
 			highlighting.WithStyle("xcode"),
 			highlighting.WithFormatOptions(
 				chromahtml.WithLineNumbers(true),

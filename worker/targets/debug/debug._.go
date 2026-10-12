@@ -22,11 +22,6 @@ func New(
 	rt *runtime.Runtime,
 	def config.Target,
 ) (t *Debug, err error) {
-	t = new(Debug)
-
-	t.rt = rt
-	t.def = def
-
 	var spec tmpl.Spec
 	switch def.Debug.Emulates {
 	case config.TargetTypeEmail:
@@ -38,26 +33,35 @@ func New(
 			errs.ErrNoSuchTargetType, def.Debug.Emulates)
 	}
 
-	t.tmplCache = tmpl.NewCache(rt.GetEmbed("templates"), spec)
+	templates := rt.GetEmbed("templates")
+	if templates == nil {
+		return nil, fmt.Errorf("%w: templates", errs.ErrEmbedNotFound)
+	}
+
+	t = new(Debug)
+
+	t.rt = rt
+	t.def = def
+	t.tmplCache = tmpl.NewCache(templates, spec)
 
 	return t, nil
 }
 
 func (t *Debug) Load() error {
-	t.rt.Info("load target", "debug",
+	t.rt.Info("load target", "debug", "id", t.def.ID,
 		"emulates", t.def.Debug.Emulates)
 	t.rt.Debug("config", t.def)
 	return nil
 }
 
 func (t *Debug) Run() error {
-	t.rt.Info("run target", "debug",
+	t.rt.Info("run target", "debug", "id", t.def.ID,
 		"emulates", t.def.Debug.Emulates,
 		"path", t.def.Debug.Path)
 	return nil
 }
 
 func (t *Debug) Shutdown() error {
-	t.rt.Info("shutdown target", "debug")
+	t.rt.Info("shutdown target", "debug", "id", t.def.ID)
 	return nil
 }

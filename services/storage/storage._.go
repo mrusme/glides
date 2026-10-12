@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"io"
 	"strings"
 
@@ -32,6 +33,10 @@ func New(cfg config.Storages) (str *Storage, err error) {
 	str.providers = make(map[string]IStorage)
 
 	for _, cfg := range str.cfg {
+		if _, exists := str.providers[cfg.ID]; exists {
+			return nil, fmt.Errorf("%w: %s", errs.ErrStorageIDDuplicate, cfg.ID)
+		}
+
 		switch strings.ToLower(cfg.Type) {
 		case "s3":
 			if str.providers[cfg.ID], err = s3.New(cfg); err != nil {
@@ -42,7 +47,7 @@ func New(cfg config.Storages) (str *Storage, err error) {
 				return nil, err
 			}
 		default:
-			return nil, errs.ErrStorageTypeInvalid
+			return nil, fmt.Errorf("%w: %s", errs.ErrStorageTypeInvalid, cfg.Type)
 		}
 	}
 
@@ -67,16 +72,26 @@ func (str *Storage) Shutdown() (err error) {
 	return nil
 }
 
+func (str *Storage) provider(id string) (IStorage, error) {
+	provider, ok := str.providers[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", errs.ErrStorageIDNotFound, id)
+	}
+
+	return provider, nil
+}
+
 func (str *Storage) StoreFile(
 	providerID string,
 	src io.ReadSeeker,
 	dest string,
 ) (err error) {
-	if _, ok := str.providers[providerID]; !ok {
-		return errs.ErrStorageIDNotFound
+	provider, err := str.provider(providerID)
+	if err != nil {
+		return err
 	}
 
-	return str.providers[providerID].StoreFile(src, dest)
+	return provider.StoreFile(src, dest)
 }
 
 func (str *Storage) StoreFileName(
@@ -84,42 +99,46 @@ func (str *Storage) StoreFileName(
 	src string,
 	dest string,
 ) (err error) {
-	if _, ok := str.providers[providerID]; !ok {
-		return errs.ErrStorageIDNotFound
+	provider, err := str.provider(providerID)
+	if err != nil {
+		return err
 	}
 
-	return str.providers[providerID].StoreFileName(src, dest)
+	return provider.StoreFileName(src, dest)
 }
 
 func (str *Storage) GetFileDownloadURL(
 	providerID string,
 	dest string,
 ) (dlurl string, abs bool, err error) {
-	if _, ok := str.providers[providerID]; !ok {
-		return dlurl, false, errs.ErrStorageIDNotFound
+	provider, err := str.provider(providerID)
+	if err != nil {
+		return dlurl, false, err
 	}
 
-	return str.providers[providerID].GetFileDownloadURL(dest)
+	return provider.GetFileDownloadURL(dest)
 }
 
 func (str *Storage) GetFile(
 	providerID string,
 	dest string,
 ) (reader io.ReadCloser, err error) {
-	if _, ok := str.providers[providerID]; !ok {
-		return nil, errs.ErrStorageIDNotFound
+	provider, err := str.provider(providerID)
+	if err != nil {
+		return nil, err
 	}
 
-	return str.providers[providerID].GetFile(dest)
+	return provider.GetFile(dest)
 }
 
 func (str *Storage) DeleteFile(
 	providerID string,
 	dest string,
 ) (err error) {
-	if _, ok := str.providers[providerID]; !ok {
-		return errs.ErrStorageIDNotFound
+	provider, err := str.provider(providerID)
+	if err != nil {
+		return err
 	}
 
-	return str.providers[providerID].DeleteFile(dest)
+	return provider.DeleteFile(dest)
 }

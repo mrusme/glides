@@ -1,5 +1,7 @@
 package config
 
+import "log/slog"
+
 const (
 	TargetTypeEmail string = "email"
 	TargetTypeXMPP  string = "xmpp"
@@ -48,6 +50,19 @@ func (t Target) Serves(channel string) bool {
 	}
 
 	return t.Type == channel
+}
+
+func (t Target) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("id", t.ID),
+		slog.String("type", t.Type),
+		slog.String("email_smtp_server", t.Email.SMTPServer),
+		slog.String("email_from", t.Email.From.Email),
+		slog.String("xmpp_server", t.XMPP.Server),
+		slog.String("xmpp_username", t.XMPP.Username),
+		slog.String("debug_emulates", t.Debug.Emulates),
+		slog.String("debug_path", t.Debug.Path),
+	)
 }
 
 type Targets []Target

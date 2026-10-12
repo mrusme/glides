@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -11,22 +12,22 @@ import (
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 	"xn--gckvb8fzb.com/glides/models/asyncjob/cron/cronrun"
 	"xn--gckvb8fzb.com/glides/runtime"
-	"xn--gckvb8fzb.com/glides/services/config"
 	servicescron "xn--gckvb8fzb.com/glides/services/cron"
 	"xn--gckvb8fzb.com/glides/services/dispatch"
 )
 
-const CHECK_INTERVAL time.Duration = 5 * time.Second
+const CheckInterval time.Duration = 5 * time.Second
 
 type Cron struct {
-	rt       *runtime.Runtime
-	redisCfg config.Redis
-	as       *asynq.Server
-	asMux    *asynq.ServeMux
+	rt   *runtime.Runtime
+	next map[string]time.Time
 
-	next    map[string]time.Time
-	stop    chan struct{}
-	stopped chan struct{}
+	mu       sync.Mutex
+	as       *asynq.Server
+	running  bool
+	stop     chan struct{}
+	stopOnce sync.Once
+	stopped  chan struct{}
 }
 
 func New(rt *runtime.Runtime) (crn *Cron, err error) {
@@ -41,29 +42,52 @@ func New(rt *runtime.Runtime) (crn *Cron, err error) {
 }
 
 func (crn *Cron) Startup() (err error) {
+	if servicescron.From(crn.rt) == nil {
+		return fmt.Errorf("%w: %s", errs.ErrServiceNotFound, servicescron.ServiceID)
+	}
+	if dispatch.From(crn.rt) == nil {
+		return fmt.Errorf("%w: %s", errs.ErrServiceNotFound, dispatch.ServiceID)
+	}
+
 	return nil
 }
 
 func (crn *Cron) Run() (err error) {
-	if crn.redisCfg, err = crn.rt.Config().Redis(); err != nil {
+	redisCfg, err := crn.rt.Config().Redis()
+	if err != nil {
 		return err
 	}
 
-	crn.as = asynq.NewServer(
-		dispatch.RedisConnOpt(crn.redisCfg),
+	crn.mu.Lock()
+	select {
+	case <-crn.stop:
+		crn.mu.Unlock()
+		return nil
+	default:
+	}
+	if crn.running {
+		crn.mu.Unlock()
+		return fmt.Errorf("%w: cron is running", errs.ErrProcessState)
+	}
+
+	as := asynq.NewServer(
+		dispatch.RedisConnOpt(redisCfg),
 		asynq.Config{
 			Logger: crn.rt.ALogger,
 			Queues: map[string]int{dispatch.QueueCron: 1},
 		},
 	)
+	mux := asynq.NewServeMux()
+	mux.HandleFunc(dispatch.TaskCron, crn.HandleJob)
 
-	crn.asMux = asynq.NewServeMux()
-	crn.asMux.HandleFunc(dispatch.TaskCron, crn.HandleJob)
-
-	if err = crn.as.Start(crn.asMux); err != nil {
-		crn.rt.Error("error", err)
+	if err = as.Start(mux); err != nil {
+		crn.mu.Unlock()
+		crn.rt.Error("status", "error", "error", err)
 		return err
 	}
+	crn.as = as
+	crn.running = true
+	crn.mu.Unlock()
 
 	crn.rt.Info("status", "ok", "entries", len(servicescron.From(crn.rt).Entries()))
 
@@ -73,16 +97,19 @@ func (crn *Cron) Run() (err error) {
 }
 
 func (crn *Cron) Shutdown() (err error) {
-	select {
-	case <-crn.stop:
-	default:
-		close(crn.stop)
+	crn.mu.Lock()
+	crn.stopOnce.Do(func() { close(crn.stop) })
+	running := crn.running
+	as := crn.as
+	crn.running = false
+	crn.as = nil
+	crn.mu.Unlock()
+
+	if running {
+		<-crn.stopped
 	}
-
-	<-crn.stopped
-
-	if crn.as != nil {
-		crn.as.Shutdown()
+	if as != nil {
+		as.Shutdown()
 	}
 
 	return nil
@@ -91,7 +118,7 @@ func (crn *Cron) Shutdown() (err error) {
 func (crn *Cron) schedule() {
 	defer close(crn.stopped)
 
-	ticker := time.NewTicker(CHECK_INTERVAL)
+	ticker := time.NewTicker(CheckInterval)
 	defer ticker.Stop()
 
 	for {
@@ -155,7 +182,7 @@ func (crn *Cron) HandleJob(ctx context.Context, t *asynq.Task) (err error) {
 
 	crn.rt.Info("status", "running", "function_id", entry.ID)
 
-	if err = entry.Fn(); err != nil {
+	if err = entry.Fn(ctx); err != nil {
 		crn.rt.Error("error", err, "function_id", entry.ID)
 		return err
 	}

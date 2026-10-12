@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -8,7 +9,7 @@ import (
 	"xn--gckvb8fzb.com/glides/errs"
 )
 
-type Fn func() error
+type Fn func(ctx context.Context) error
 
 type Entry struct {
 	ID       string

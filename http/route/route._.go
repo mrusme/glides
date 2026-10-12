@@ -7,6 +7,12 @@ import (
 type Route struct {
 	Hierarchy    []string
 	NoBreadcrumb bool
+
+	prepared bool
+	url      string
+	id       string
+	title    string
+	parent   string
 }
 
 type Table map[string]Route
@@ -14,8 +20,58 @@ type Table map[string]Route
 var Routes Table = make(Table)
 
 func Use(table Table, title string) {
-	Routes = table
+	Routes = prepare(table)
 	defaultTitle = title
+}
+
+func prepare(table Table) Table {
+	ids := make(map[string]string, len(table))
+	for id, r := range table {
+		ids[key(r.Hierarchy)] = id
+	}
+
+	prepared := make(Table, len(table))
+	for id, r := range table {
+		r.url = joinURL(r.Hierarchy)
+		r.id = joinID(r.Hierarchy)
+		r.title = titleOf(r.id)
+		if len(r.Hierarchy) >= 2 {
+			r.parent = ids[key(r.Hierarchy[:len(r.Hierarchy)-1])]
+		}
+		r.prepared = true
+		prepared[id] = r
+	}
+
+	return prepared
+}
+
+func key(hierarchy []string) string {
+	return strings.Join(hierarchy, "\x00")
+}
+
+func joinURL(hierarchy []string) string {
+	if len(hierarchy) <= 1 {
+		return ""
+	}
+
+	return strings.Join(hierarchy[1:], "/")
+}
+
+func joinID(hierarchy []string) string {
+	joined := strings.Join(hierarchy, "_")
+	if strings.Contains(joined, ":") {
+		return ""
+	}
+
+	return joined
+}
+
+func titleOf(id string) string {
+	if id == "" {
+		return ""
+	}
+
+	return id + "_title"
 }
 
 func (r Route) Len() int {
@@ -23,25 +79,27 @@ func (r Route) Len() int {
 }
 
 func (r Route) AsURL() string {
-	if r.Len() <= 1 {
-		return ""
+	if r.prepared {
+		return r.url
 	}
-	return strings.Join([]string(r.Hierarchy)[1:], "/")
+
+	return joinURL(r.Hierarchy)
 }
 
 func (r Route) AsID() string {
-	joined := strings.Join([]string(r.Hierarchy), "_")
-	if strings.Contains(joined, ":") {
-		return ""
+	if r.prepared {
+		return r.id
 	}
-	return joined
+
+	return joinID(r.Hierarchy)
 }
 
 func (r Route) AsTitle() (title string) {
-	if title = r.AsID(); title == "" {
-		return title
+	if r.prepared {
+		return r.title
 	}
-	return title + "_title"
+
+	return titleOf(joinID(r.Hierarchy))
 }
 
 func (r Route) Pathname() string {
@@ -54,6 +112,10 @@ func (r Route) Pathname() string {
 }
 
 func (r Route) Parent() (id string) {
+	if r.prepared {
+		return r.parent
+	}
+
 	rl := r.Len()
 	if rl < 2 {
 		return ""
@@ -96,29 +158,28 @@ func (r Route) HasBreadcrumb() bool {
 }
 
 func (r Route) Fill(params map[string]string) (rt Route) {
-	var filledHierarchy []string
+	filledHierarchy := make([]string, 0, len(r.Hierarchy))
 
 	for _, segment := range r.Hierarchy {
 		before, after, ok := strings.Cut(segment, ":")
 		if ok {
-			segmentVar := after
-			if filler, ok := params[segmentVar]; ok {
+			if filler, ok := params[after]; ok {
 				filledHierarchy = append(filledHierarchy, before+filler)
-			} else {
-				filledHierarchy = append(filledHierarchy, segment)
+				continue
 			}
-		} else {
-			filledHierarchy = append(filledHierarchy, segment)
 		}
+		filledHierarchy = append(filledHierarchy, segment)
 	}
 
 	return Route{
-		Hierarchy: filledHierarchy,
+		Hierarchy:    filledHierarchy,
+		NoBreadcrumb: r.NoBreadcrumb,
 	}
 }
 
 func (r *Route) SetHierarchy(h []string) {
 	r.Hierarchy = h
+	r.prepared = false
 }
 
 func For(id string) (r Route) {

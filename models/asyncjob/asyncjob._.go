@@ -17,7 +17,6 @@ const (
 type JobSubType string
 
 const (
-	// Cron
 	Run JobSubType = "run"
 )
 

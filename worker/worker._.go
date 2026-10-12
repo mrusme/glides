@@ -3,11 +3,14 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
 
 	"github.com/hibiken/asynq"
+	"xn--gckvb8fzb.com/glides/errs"
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 	"xn--gckvb8fzb.com/glides/runtime"
-	"xn--gckvb8fzb.com/glides/services/config"
 	"xn--gckvb8fzb.com/glides/services/dispatch"
 	"xn--gckvb8fzb.com/glides/worker/targets"
 )
@@ -16,9 +19,12 @@ type Worker struct {
 	rt       *runtime.Runtime
 	ts       *targets.Targets
 	register targets.Register
-	redisCfg config.Redis
+
+	mu       sync.Mutex
 	as       *asynq.Server
-	asMux    *asynq.ServeMux
+	running  bool
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 func New(
@@ -29,67 +35,96 @@ func New(
 
 	wrk.rt = rt
 	wrk.register = register
+	wrk.stop = make(chan struct{})
 
 	return wrk, nil
 }
 
-func (wrk *Worker) Startup() error {
-	return nil
-}
-
-func (wrk *Worker) Run() (err error) {
-	wrk.ts, err = targets.New(wrk.rt, wrk.register)
-	wrk.rt.NilOrDie(err)
-
-	err = wrk.ts.LoadAll()
-	wrk.rt.NilOrDie(err)
-
-	err = wrk.ts.RunAll()
-	wrk.rt.NilOrDie(err)
-
-	if wrk.redisCfg, err = wrk.rt.Config().Redis(); err != nil {
+func (wrk *Worker) Startup() (err error) {
+	if wrk.ts, err = targets.New(wrk.rt, wrk.register); err != nil {
 		return err
 	}
 
-	wrk.as = asynq.NewServer(
-		dispatch.RedisConnOpt(wrk.redisCfg),
+	return wrk.ts.LoadAll()
+}
+
+func (wrk *Worker) Run() (err error) {
+	redisCfg, err := wrk.rt.Config().Redis()
+	if err != nil {
+		return err
+	}
+
+	wrk.mu.Lock()
+	select {
+	case <-wrk.stop:
+		wrk.mu.Unlock()
+		return nil
+	default:
+	}
+	if wrk.ts == nil {
+		wrk.mu.Unlock()
+		return fmt.Errorf("%w: worker was not started", errs.ErrProcessState)
+	}
+	if wrk.running {
+		wrk.mu.Unlock()
+		return fmt.Errorf("%w: worker is running", errs.ErrProcessState)
+	}
+
+	if err = wrk.ts.RunAll(); err != nil {
+		wrk.mu.Unlock()
+		return err
+	}
+
+	as := asynq.NewServer(
+		dispatch.RedisConnOpt(redisCfg),
 		asynq.Config{
 			Logger: wrk.rt.ALogger,
-			// Concurrency: wrk.redisCfg.Poolsize,
 		},
 	)
+	mux := asynq.NewServeMux()
+	mux.HandleFunc(dispatch.TaskJob, wrk.HandleJob)
 
-	wrk.asMux = asynq.NewServeMux()
-	wrk.asMux.HandleFunc(dispatch.TaskJob, asynqHandler(wrk))
+	if err = as.Start(mux); err != nil {
+		wrk.mu.Unlock()
+		return err
+	}
+	wrk.as = as
+	wrk.running = true
+	wrk.mu.Unlock()
 
-	err = wrk.as.Run(wrk.asMux)
-	wrk.rt.NilOrDie(err)
+	<-wrk.stop
 
-	return err
+	return nil
 }
 
 func (wrk *Worker) Shutdown() error {
-	if wrk.as != nil {
-		wrk.as.Shutdown()
+	wrk.mu.Lock()
+	wrk.stopOnce.Do(func() { close(wrk.stop) })
+	as := wrk.as
+	wrk.as = nil
+	wrk.running = false
+	wrk.mu.Unlock()
+
+	if as != nil {
+		as.Shutdown()
 	}
 
 	if wrk.ts == nil {
 		return nil
 	}
 
-	ok, shutdownErrs := wrk.ts.ShutdownAll()
-	if !ok {
-		for id, err := range shutdownErrs {
-			wrk.rt.Error("failed to shutdown target", "worker",
-				"target", id, "error", err)
-		}
+	ok, failures := wrk.ts.ShutdownAll()
+	if ok {
+		return nil
 	}
 
-	return nil
-}
+	joined := make([]error, 0, len(failures))
+	for id, ferr := range failures {
+		wrk.rt.Error("status", "error", "target", id, "error", ferr)
+		joined = append(joined, ferr)
+	}
 
-func asynqHandler(wrk *Worker) func(context.Context, *asynq.Task) error {
-	return wrk.HandleJob
+	return errors.Join(joined...)
 }
 
 func (wrk *Worker) HandleJob(ctx context.Context, t *asynq.Task) error {
@@ -98,13 +133,12 @@ func (wrk *Worker) HandleJob(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	wrk.rt.Debug("status", "working", "payload", t.Payload())
+	wrk.rt.Debug("status", "working",
+		"id", job.ID, "target", job.TargetID,
+		"type", job.Type, "sub_type", job.SubType)
 
-	if err := wrk.ts.Execute(
-		job.TargetID,
-		job,
-	); err != nil {
-		wrk.rt.Error("error", err)
+	if err := wrk.ts.Execute(ctx, job.TargetID, job); err != nil {
+		wrk.rt.Error("error", err, "id", job.ID, "target", job.TargetID)
 		return err
 	}
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -25,16 +26,16 @@ func TestExecuteRoutesBySubType(t *testing.T) {
 	h := new(Handlers)
 
 	var got asyncjob.JobSubType
-	h.Handle(confirmation, signup, func(j asyncjob.AsyncJob) error {
+	h.Handle(confirmation, signup, func(ctx context.Context, j asyncjob.AsyncJob) error {
 		got = signup
 		return nil
 	})
-	h.Handle(confirmation, emailChange, func(j asyncjob.AsyncJob) error {
+	h.Handle(confirmation, emailChange, func(ctx context.Context, j asyncjob.AsyncJob) error {
 		got = emailChange
 		return nil
 	})
 
-	if err := h.Execute(asyncjob.AsyncJob{
+	if err := h.Execute(context.Background(), asyncjob.AsyncJob{
 		Type: confirmation, SubType: emailChange,
 	}); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -47,11 +48,11 @@ func TestExecuteRoutesBySubType(t *testing.T) {
 
 func TestExecuteUnregisteredType(t *testing.T) {
 	h := new(Handlers)
-	h.Handle(confirmation, signup, func(j asyncjob.AsyncJob) error {
+	h.Handle(confirmation, signup, func(ctx context.Context, j asyncjob.AsyncJob) error {
 		return nil
 	})
 
-	err := h.Execute(asyncjob.AsyncJob{
+	err := h.Execute(context.Background(), asyncjob.AsyncJob{
 		Type: notification, SubType: reply,
 	})
 	if !errors.Is(err, errs.ErrJobTypeInvalid) {
@@ -61,11 +62,11 @@ func TestExecuteUnregisteredType(t *testing.T) {
 
 func TestExecuteUnregisteredSubType(t *testing.T) {
 	h := new(Handlers)
-	h.Handle(notification, reply, func(j asyncjob.AsyncJob) error {
+	h.Handle(notification, reply, func(ctx context.Context, j asyncjob.AsyncJob) error {
 		return nil
 	})
 
-	err := h.Execute(asyncjob.AsyncJob{
+	err := h.Execute(context.Background(), asyncjob.AsyncJob{
 		Type: notification, SubType: mention,
 	})
 	if !errors.Is(err, errs.ErrJobSubTypeInvalid) {
@@ -73,31 +74,38 @@ func TestExecuteUnregisteredSubType(t *testing.T) {
 	}
 }
 
-func TestExecuteReturnsHandlerError(t *testing.T) {
+func TestExecuteReturnsHandlerErrorAndPassesTheContext(t *testing.T) {
 	h := new(Handlers)
 	want := errors.New("delivery failed")
-	h.Handle(confirmation, signup, func(j asyncjob.AsyncJob) error {
+	type keyType struct{}
+	var seen any
+	h.Handle(confirmation, signup, func(ctx context.Context, j asyncjob.AsyncJob) error {
+		seen = ctx.Value(keyType{})
 		return want
 	})
 
-	err := h.Execute(asyncjob.AsyncJob{
+	ctx := context.WithValue(context.Background(), keyType{}, "marker")
+	err := h.Execute(ctx, asyncjob.AsyncJob{
 		Type: confirmation, SubType: signup,
 	})
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
 	}
+	if seen != "marker" {
+		t.Errorf("the handler saw the context value %v, want marker", seen)
+	}
 }
 
 func TestConcurrentExecute(t *testing.T) {
 	h := new(Handlers)
-	h.Handle(confirmation, signup, func(j asyncjob.AsyncJob) error {
+	h.Handle(confirmation, signup, func(ctx context.Context, j asyncjob.AsyncJob) error {
 		return nil
 	})
 
 	var wg sync.WaitGroup
 	for range 16 {
 		wg.Go(func() {
-			if err := h.Execute(asyncjob.AsyncJob{
+			if err := h.Execute(context.Background(), asyncjob.AsyncJob{
 				Type: confirmation, SubType: signup,
 			}); err != nil {
 				t.Errorf("Execute: %v", err)

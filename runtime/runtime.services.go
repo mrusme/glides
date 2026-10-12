@@ -2,16 +2,16 @@ package runtime
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 
+	"xn--gckvb8fzb.com/glides/errs"
 	"xn--gckvb8fzb.com/glides/services/config"
-	"xn--gckvb8fzb.com/glides/services/database"
 )
 
-func (rt *Runtime) AddService(id string, service any) (err error) {
+func (rt *Runtime) AddService(id string, service any) {
 	rt.services[id] = service
-	return nil
 }
 
 func (rt *Runtime) Register(id string, service Service) {
@@ -25,31 +25,18 @@ func (rt *Runtime) GetService(id string) (service any, err error) {
 	var exists bool = false
 
 	if service, exists = rt.services[id]; exists == false {
-		return nil, errors.New("no service found") // TODO: Replace with errs error
+		return nil, fmt.Errorf("%w: %s", errs.ErrServiceNotFound, id)
 	}
 
 	return service, nil
 }
 
 func (rt *Runtime) Config() (service *config.Config) {
-	if srv, _ := rt.GetService("_config"); srv != nil {
-		return srv.(*config.Config)
-	}
-	return nil
+	return rt.cfg
 }
 
 func (rt *Runtime) Logger() (service *slog.Logger) {
-	if srv, _ := rt.GetService("_logger"); srv != nil {
-		return srv.(*slog.Logger)
-	}
-	return nil
-}
-
-func (rt *Runtime) Database() (service *database.Database) {
-	if srv, _ := rt.GetService("_database"); srv != nil {
-		return srv.(*database.Database)
-	}
-	return nil
+	return rt.logger
 }
 
 func (rt *Runtime) OnStartup(hooks ...Hook) {
@@ -64,32 +51,27 @@ func (rt *Runtime) Startup() (err error) {
 	rt.Debug("status", "exec")
 
 	rt.Debug("startup", "config")
-	if err = rt.Config().Startup(); err != nil {
+	if err = rt.cfg.Startup(); err != nil {
 		rt.Error("status", "error", "error", err)
 		return err
 	}
-
-	if rt.Database() != nil {
-		rt.Debug("startup", "database")
-		if err = rt.Database().Startup(); err != nil {
-			rt.Error("status", "error", "error", err)
-			return err
-		}
-	}
+	rt.configStarted = true
 
 	for _, id := range rt.order {
 		rt.Debug("startup", id)
 		if err = rt.services[id].(Service).Startup(); err != nil {
 			rt.Error("status", "error", "service", id, "error", err)
-			return err
+			return errors.Join(err, rt.shutdown())
 		}
+		rt.started = append(rt.started, id)
 	}
+	rt.hooksReached = true
 
 	for idx, hook := range rt.onStartup {
 		rt.Debug("startup", "hook", "index", idx)
 		if err = hook(); err != nil {
-			rt.Error("status", "error", "error", err)
-			return err
+			rt.Error("status", "error", "hook", idx, "error", err)
+			return errors.Join(err, rt.shutdown())
 		}
 	}
 
@@ -101,32 +83,7 @@ func (rt *Runtime) Startup() (err error) {
 func (rt *Runtime) Shutdown() (err error) {
 	rt.Debug("status", "exec")
 
-	for idx, v := range slices.Backward(rt.onShutdown) {
-		rt.Debug("shutdown", "hook", "index", idx)
-		if err = v(); err != nil {
-			rt.Error("status", "error", "error", err)
-			return err
-		}
-	}
-
-	for _, id := range slices.Backward(rt.order) {
-		rt.Debug("shutdown", id)
-		if err = rt.services[id].(Service).Shutdown(); err != nil {
-			rt.Error("status", "error", "service", id, "error", err)
-			return err
-		}
-	}
-
-	if rt.Database() != nil {
-		rt.Debug("shutdown", "database")
-		if err = rt.Database().Shutdown(); err != nil {
-			rt.Error("status", "error", "error", err)
-			return err
-		}
-	}
-
-	rt.Debug("shutdown", "config")
-	if err = rt.Config().Shutdown(); err != nil {
+	if err = rt.shutdown(); err != nil {
 		rt.Error("status", "error", "error", err)
 		return err
 	}
@@ -134,4 +91,39 @@ func (rt *Runtime) Shutdown() (err error) {
 	rt.Info("status", "ok")
 
 	return nil
+}
+
+func (rt *Runtime) shutdown() error {
+	var failures []error
+
+	if rt.hooksReached {
+		for idx, hook := range slices.Backward(rt.onShutdown) {
+			rt.Debug("shutdown", "hook", "index", idx)
+			if herr := hook(); herr != nil {
+				rt.Error("status", "error", "hook", idx, "error", herr)
+				failures = append(failures, herr)
+			}
+		}
+		rt.hooksReached = false
+	}
+
+	for _, id := range slices.Backward(rt.started) {
+		rt.Debug("shutdown", id)
+		if serr := rt.services[id].(Service).Shutdown(); serr != nil {
+			rt.Error("status", "error", "service", id, "error", serr)
+			failures = append(failures, serr)
+		}
+	}
+	rt.started = nil
+
+	if rt.configStarted {
+		rt.Debug("shutdown", "config")
+		if cerr := rt.cfg.Shutdown(); cerr != nil {
+			rt.Error("status", "error", "error", cerr)
+			failures = append(failures, cerr)
+		}
+		rt.configStarted = false
+	}
+
+	return errors.Join(failures...)
 }

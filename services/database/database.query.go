@@ -53,7 +53,6 @@ func (db *Database) Exec(
 	ctx, cancel := db.deadline(ctx)
 	defer cancel()
 
-	db.log.Debug("Database.Exec", "sql", sql)
 	return db.pool.Exec(ctx, sql, args...)
 }
 
@@ -68,7 +67,6 @@ func (db *Database) Query(
 
 	ctx, cancel := db.deadline(ctx)
 
-	db.log.Debug("Database.Query", "sql", sql)
 	result, err := db.pool.Query(ctx, sql, args...)
 	if err != nil {
 		cancel()
@@ -89,7 +87,6 @@ func (db *Database) QueryRow(
 
 	ctx, cancel := db.deadline(ctx)
 
-	db.log.Debug("Database.QueryRow", "sql", sql)
 	return &row{Row: db.pool.QueryRow(ctx, sql, args...), cancel: cancel}
 }
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -8,7 +9,7 @@ import (
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 )
 
-type Handler func(j asyncjob.AsyncJob) error
+type Handler func(ctx context.Context, j asyncjob.AsyncJob) error
 
 type Message struct {
 	Username string
@@ -45,7 +46,7 @@ func (h *Handlers) Handle(
 	h.types[jobType] = true
 }
 
-func (h *Handlers) Execute(j asyncjob.AsyncJob) error {
+func (h *Handlers) Execute(ctx context.Context, j asyncjob.AsyncJob) error {
 	h.mu.RLock()
 	fn, ok := h.handlers[Key{Type: j.Type, SubType: j.SubType}]
 	known := h.types[j.Type]
@@ -59,5 +60,5 @@ func (h *Handlers) Execute(j asyncjob.AsyncJob) error {
 			errs.ErrJobSubTypeInvalid, j.Type, j.SubType)
 	}
 
-	return fn(j)
+	return fn(ctx, j)
 }

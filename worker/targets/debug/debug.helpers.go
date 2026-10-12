@@ -1,6 +1,7 @@
 package debug
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,9 +60,9 @@ func (t *Debug) PrepareMessage(
 	}
 	b.section("text", sb.String())
 
-	if item.HtmlTmpl != nil {
+	if item.HTMLTmpl != nil {
 		sb.Reset()
-		if err = item.HtmlTmpl.Execute(&sb, data); err != nil {
+		if err = item.HTMLTmpl.Execute(&sb, data); err != nil {
 			return nil, err
 		}
 		b.section("html", sb.String())
@@ -80,6 +81,7 @@ func (t *Debug) PrepareMessage(
 }
 
 func (t *Debug) SendMessages(
+	ctx context.Context,
 	messages []*Msg,
 ) (err error) {
 	for _, message := range messages {

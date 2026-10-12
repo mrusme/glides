@@ -1,8 +1,8 @@
 package common
 
 import (
-	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -37,28 +37,36 @@ func (qo QueryOptions) Query(
 	query string,
 	qc QueryCapabilities,
 ) (q string) {
-	q = query
+	var b strings.Builder
+	b.Grow(len(query) + 128)
+	b.WriteString(query)
 
-	var wheres []string
-
-	if qc.HasBanned && qo.WithBanned == false {
-		wheres = append(wheres, qo.getColumn("banned_at", "IS NULL", qc))
-	}
-	if qc.HasSpammed && qo.WithSpammed == false {
-		wheres = append(wheres, qo.getColumn("spammed_at", "IS NULL", qc))
-	}
-	if qc.HasDeleted && qo.WithDeleted == false {
-		wheres = append(wheres, qo.getColumn("deleted_at", "IS NULL", qc))
+	joiner := " WHERE "
+	if hasTopLevelWhere(query) {
+		joiner = " AND "
 	}
 
-	if len(wheres) > 0 {
-		if !hasTopLevelWhere(query) {
-			q = fmt.Sprintf("%s WHERE ", query)
-		} else {
-			q = fmt.Sprintf("%s AND ", query)
+	qualified := qc.Table != "" && validIdentifier.MatchString(qc.Table)
+	for _, condition := range []struct {
+		has    bool
+		with   bool
+		column string
+	}{
+		{qc.HasBanned, qo.WithBanned, "banned_at"},
+		{qc.HasSpammed, qo.WithSpammed, "spammed_at"},
+		{qc.HasDeleted, qo.WithDeleted, "deleted_at"},
+	} {
+		if !condition.has || condition.with {
+			continue
 		}
-
-		q = fmt.Sprintf("%s %s", q, strings.Join(wheres, " AND "))
+		b.WriteString(joiner)
+		if qualified {
+			b.WriteString(qc.Table)
+			b.WriteByte('.')
+		}
+		b.WriteString(condition.column)
+		b.WriteString(" IS NULL")
+		joiner = " AND "
 	}
 
 	if qo.OrderBy != "" && validIdentifier.MatchString(qo.OrderBy) {
@@ -66,17 +74,30 @@ func (qo QueryOptions) Query(
 		if order != Ascending && order != Descending {
 			order = Descending
 		}
-		q = fmt.Sprintf("%s ORDER BY %s %s", q, qo.OrderBy, string(order))
+		b.WriteString(" ORDER BY ")
+		b.WriteString(qo.OrderBy)
+		b.WriteByte(' ')
+		b.WriteString(string(order))
 	}
 
 	if qo.Limit > 0 {
-		q = fmt.Sprintf("%s LIMIT %d", q, qo.Limit)
+		b.WriteString(" LIMIT ")
+		b.WriteString(strconv.Itoa(qo.Limit))
 		if qo.Page > 0 {
-			q = fmt.Sprintf("%s OFFSET %d", q, int(((qo.Page-1)*qo.Limit)-qo.OffAdjust))
+			b.WriteString(" OFFSET ")
+			b.WriteString(strconv.Itoa(qo.Offset()))
 		}
 	}
 
-	return q
+	return b.String()
+}
+
+func (qo QueryOptions) Offset() int {
+	if qo.Limit <= 0 || qo.Page <= 0 {
+		return 0
+	}
+
+	return max(0, (qo.Page-1)*qo.Limit-qo.OffAdjust)
 }
 
 func hasTopLevelWhere(query string) bool {
@@ -120,18 +141,4 @@ func hasTopLevelWhere(query string) bool {
 
 func isIdentifierByte(c byte) bool {
 	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-}
-
-func (qo QueryOptions) getColumn(
-	name string,
-	val string,
-	qc QueryCapabilities,
-) (column string) {
-	column = name
-	if qc.Table != "" && validIdentifier.MatchString(qc.Table) {
-		column = qc.Table + "." + name
-	}
-	column += " " + val
-
-	return column
 }

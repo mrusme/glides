@@ -4,9 +4,8 @@ import (
 	"embed"
 )
 
-func (rt *Runtime) AddEmbed(id string, ed *embed.FS) (err error) {
+func (rt *Runtime) AddEmbed(id string, ed *embed.FS) {
 	rt.embeds[id] = ed
-	return nil
 }
 
 func (rt *Runtime) GetEmbed(id string) (ed *embed.FS) {

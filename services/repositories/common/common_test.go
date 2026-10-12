@@ -104,8 +104,70 @@ func TestQueryAppendsToASubquery(t *testing.T) {
 		"SELECT * FROM (SELECT * FROM users WHERE banned_at IS NULL) AS u",
 		QueryCapabilities{HasDeleted: true},
 	)
-	want := "SELECT * FROM (SELECT * FROM users WHERE banned_at IS NULL) AS u WHERE  deleted_at IS NULL"
+	want := "SELECT * FROM (SELECT * FROM users WHERE banned_at IS NULL) AS u WHERE deleted_at IS NULL"
 	if got != want {
 		t.Errorf("Query = %q, want %q", got, want)
+	}
+}
+
+func TestQueryBuildsTheWholeStatement(t *testing.T) {
+	qo := QueryOptions{Limit: 20, Page: 3, OrderBy: "created_at", Order: Descending}
+	qc := QueryCapabilities{Table: "posts", HasBanned: true, HasSpammed: true, HasDeleted: true}
+
+	got := qo.Query("SELECT * FROM posts WHERE forum_id = $1", qc)
+	want := "SELECT * FROM posts WHERE forum_id = $1 AND posts.banned_at IS NULL" +
+		" AND posts.spammed_at IS NULL AND posts.deleted_at IS NULL" +
+		" ORDER BY created_at DESC LIMIT 20 OFFSET 40"
+	if got != want {
+		t.Errorf("Query = %q, want %q", got, want)
+	}
+
+	got = QueryOptions{WithBanned: true, WithSpammed: true, WithDeleted: true}.Query("SELECT * FROM posts", qc)
+	if got != "SELECT * FROM posts" {
+		t.Errorf("Query with every With flag = %q, want the statement untouched", got)
+	}
+}
+
+func TestQueryOffsetIsNeverNegative(t *testing.T) {
+	for name, qo := range map[string]QueryOptions{
+		"first page with an adjustment": {Limit: 10, Page: 1, OffAdjust: 15},
+		"adjustment larger than offset": {Limit: 10, Page: 2, OffAdjust: 25},
+	} {
+		got := qo.Query("SELECT * FROM t", QueryCapabilities{})
+		if strings.Contains(got, "OFFSET -") {
+			t.Errorf("%s: %q", name, got)
+		}
+		if !strings.HasSuffix(got, "OFFSET 0") {
+			t.Errorf("%s: %q, want OFFSET 0", name, got)
+		}
+	}
+
+	if got := (QueryOptions{Limit: 10, Page: 3, OffAdjust: 5}).Offset(); got != 15 {
+		t.Errorf("Offset() = %d, want 15", got)
+	}
+	if got := (QueryOptions{Limit: 10}).Offset(); got != 0 {
+		t.Errorf("Offset() without a page = %d, want 0", got)
+	}
+}
+
+func TestQueryAllocatesLittle(t *testing.T) {
+	qo := QueryOptions{Limit: 20, Page: 3, OrderBy: "created_at"}
+	qc := QueryCapabilities{Table: "posts", HasBanned: true, HasSpammed: true, HasDeleted: true}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		qo.Query("SELECT * FROM posts WHERE forum_id = $1", qc)
+	})
+	if allocs > 3 {
+		t.Errorf("Query costs %.0f allocations", allocs)
+	}
+}
+
+func BenchmarkQuery(b *testing.B) {
+	qo := QueryOptions{Limit: 20, Page: 3, OrderBy: "created_at", Order: Descending}
+	qc := QueryCapabilities{Table: "posts", HasBanned: true, HasSpammed: true, HasDeleted: true}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		qo.Query("SELECT * FROM posts WHERE forum_id = $1", qc)
 	}
 }

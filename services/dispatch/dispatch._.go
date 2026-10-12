@@ -90,14 +90,24 @@ func (disp *Dispatch) routing() (r Routing, err error) {
 func (disp *Dispatch) Startup() (err error) {
 	disp.ac = asynq.NewClient(RedisConnOpt(disp.cfg))
 
+	if err = disp.ac.Ping(); err != nil {
+		disp.ac.Close()
+		disp.ac = nil
+		return err
+	}
+
 	return nil
 }
 
 func (disp *Dispatch) Shutdown() (err error) {
-	if disp.ac != nil {
-		disp.ac.Close()
+	if disp.ac == nil {
+		return nil
 	}
-	return nil
+
+	err = disp.ac.Close()
+	disp.ac = nil
+
+	return err
 }
 
 func (disp *Dispatch) Job(
@@ -112,6 +122,10 @@ func (disp *Dispatch) enqueue(
 	taskType string,
 	opts ...asynq.Option,
 ) (err error) {
+	if disp.ac == nil {
+		return errs.ErrDispatchNotStarted
+	}
+
 	if _, err = j.SetID(); err != nil {
 		return err
 	}

@@ -1,6 +1,8 @@
 package email
 
 import (
+	"context"
+
 	"github.com/wneessen/go-mail"
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 	"xn--gckvb8fzb.com/glides/worker/targets/handler"
@@ -10,7 +12,7 @@ func HandlerFor[P any](
 	t *Email,
 	message func(payload P) handler.Message,
 ) handler.Handler {
-	return func(job asyncjob.AsyncJob) (err error) {
+	return func(ctx context.Context, job asyncjob.AsyncJob) (err error) {
 		t.rt.Info("execute target", "email",
 			"type", job.Type, "sub_type", job.SubType)
 
@@ -18,8 +20,6 @@ func HandlerFor[P any](
 		if err != nil {
 			return err
 		}
-
-		t.rt.Debug("payloads", payloads)
 
 		var messages []*mail.Msg
 		for _, payload := range payloads {
@@ -42,6 +42,6 @@ func HandlerFor[P any](
 			messages = append(messages, msg)
 		}
 
-		return t.SendMessages(messages)
+		return t.SendMessages(ctx, messages)
 	}
 }

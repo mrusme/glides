@@ -6,17 +6,12 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-const (
-	VALID_SLUG_REGEX     = `^[a-z0-9\-]+$`
-	VALID_SLUG_REGEX_NEG = `[^a-z0-9\-]`
-)
+const SlugPattern string = `^[a-z0-9\-]+$`
+
+var slug = regexp.MustCompile(SlugPattern)
 
 func IsValidSlug(fl validator.FieldLevel) bool {
-	value := fl.Field().String()
-
-	re := regexp.MustCompile(VALID_SLUG_REGEX)
-
-	return re.MatchString(value)
+	return slug.MatchString(fl.Field().String())
 }
 
 func New() *validator.Validate {

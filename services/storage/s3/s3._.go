@@ -5,13 +5,14 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/rhnvrm/simples3"
 	"xn--gckvb8fzb.com/glides/errs"
 	"xn--gckvb8fzb.com/glides/services/config"
 )
+
+const DefaultPresignedExpiry int = 60
 
 type S3 struct {
 	cfg    config.Storage
@@ -43,18 +44,17 @@ func (st *S3) Shutdown() (err error) {
 }
 
 func (st *S3) getBucketObjectFile(dest string) (bucket string, objKey string, fileName string, err error) {
-	separator := string(os.PathSeparator)
-	cleanDest := filepath.Clean(dest)
-	destSplit := strings.Split(cleanDest, separator)
-	destSplitLen := len(destSplit)
-	if destSplitLen < 2 {
-		return bucket, objKey, fileName, errs.ErrFilePathInvalid
+	parts := strings.Split(strings.Trim(dest, "/"), "/")
+	if len(parts) < 2 {
+		return "", "", "", errs.ErrFilePathInvalid
 	}
-	bucket = destSplit[0]
-	objKey = strings.Join(destSplit[1:], "/")
-	fileName = destSplit[(destSplitLen - 1)]
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return "", "", "", errs.ErrFilePathInvalid
+		}
+	}
 
-	return bucket, objKey, fileName, nil
+	return parts[0], strings.Join(parts[1:], "/"), parts[len(parts)-1], nil
 }
 
 func (st *S3) getFileContentType(file io.ReadSeeker) (contentType string, err error) {
@@ -132,19 +132,21 @@ func (st *S3) GetFileDownloadURL(dest string) (
 			return dlurl, false, err
 		}
 
+		expiry := st.cfg.S3.PresignedExpiry
+		if expiry <= 0 {
+			expiry = DefaultPresignedExpiry
+		}
+
 		dlurl = st.client.GeneratePresignedURL(simples3.PresignedInput{
 			Bucket:        bucket,
 			ObjectKey:     objKey,
 			Method:        "GET",
-			ExpirySeconds: 60, // TODO: Make configurable
+			ExpirySeconds: expiry,
 		})
 
 		return dlurl, true, nil
 	}
 
-	// TODO: If neither public nor presigned downloads are possible, download the
-	// file temporarily into Redis and provide a temporary download URL that lets
-	// the client get it through a special Route. Set a TTL in Redis.
 	return dlurl, false, errs.ErrNotImplemented
 }
 

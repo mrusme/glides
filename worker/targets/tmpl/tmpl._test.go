@@ -60,11 +60,11 @@ func renderText(t *testing.T, item Item) string {
 	return sb.String()
 }
 
-func renderHtml(t *testing.T, item Item) string {
+func renderHTML(t *testing.T, item Item) string {
 	t.Helper()
 
 	var sb strings.Builder
-	if err := item.HtmlTmpl.Execute(&sb, nil); err != nil {
+	if err := item.HTMLTmpl.Execute(&sb, nil); err != nil {
 		t.Fatalf("execute html template: %v", err)
 	}
 
@@ -92,7 +92,7 @@ func TestSubTypesDoNotShareCacheEntry(t *testing.T) {
 		t.Errorf("reply text = %q, want %q", got, want)
 	}
 
-	if got, want := renderHtml(t, reply), "email notification reply en html"; got != want {
+	if got, want := renderHTML(t, reply), "email notification reply en html"; got != want {
 		t.Errorf("reply html = %q, want %q", got, want)
 	}
 }
@@ -127,8 +127,8 @@ func TestTextOnlySpecLeavesHtmlNil(t *testing.T) {
 		t.Fatalf("signup: %v", err)
 	}
 
-	if item.HtmlTmpl != nil {
-		t.Error("HtmlTmpl = non-nil, want nil for a text-only spec")
+	if item.HTMLTmpl != nil {
+		t.Error("HTMLTmpl = non-nil, want nil for a text-only spec")
 	}
 
 	if got, want := renderText(t, item), "xmpp confirmation signup en markdown"; got != want {

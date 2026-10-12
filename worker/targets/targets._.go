@@ -1,6 +1,7 @@
 package targets
 
 import (
+	"context"
 	"fmt"
 
 	"xn--gckvb8fzb.com/glides/errs"
@@ -15,15 +16,11 @@ import (
 type ITarget interface {
 	Load() error
 	Run() error
-	Execute(
-		j asyncjob.AsyncJob,
-	) error
+	Execute(ctx context.Context, j asyncjob.AsyncJob) error
 	Shutdown() error
 }
 
-type (
-	ITargets map[string]ITarget
-)
+type ITargets map[string]ITarget
 
 type Register func(id string, t ITarget) error
 
@@ -70,15 +67,21 @@ func New(
 	}
 
 	for _, tcfg := range ts.defs {
-		if ts.targets[tcfg.ID], err = NewTarget(rt, tcfg); err != nil {
+		if _, exists := ts.targets[tcfg.ID]; exists {
+			return nil, fmt.Errorf("%w: %s", errs.ErrTargetIDDuplicate, tcfg.ID)
+		}
+
+		target, err := NewTarget(rt, tcfg)
+		if err != nil {
 			return nil, err
 		}
+		ts.targets[tcfg.ID] = target
 
 		if register == nil {
 			continue
 		}
 
-		if err = register(tcfg.ID, ts.targets[tcfg.ID]); err != nil {
+		if err = register(tcfg.ID, target); err != nil {
 			return nil, err
 		}
 	}
@@ -113,29 +116,16 @@ func (ts *Targets) RunAll() error {
 }
 
 func (ts *Targets) Execute(
+	ctx context.Context,
 	id string,
 	j asyncjob.AsyncJob,
 ) error {
-	if _, ok := ts.targets[id]; !ok {
-		return errs.ErrTargetIDNotFound
-	}
-	return ts.targets[id].Execute(j)
-}
-
-func (ts *Targets) ExecuteAll(
-	j asyncjob.AsyncJob,
-) (bool, map[string]error) {
-	var errs map[string]error = make(map[string]error)
-	var ok bool = true
-
-	for _, tcfg := range ts.defs {
-		if err := ts.targets[tcfg.ID].Execute(j); err != nil {
-			errs[tcfg.ID] = err
-			ok = false
-		}
+	target, ok := ts.targets[id]
+	if !ok {
+		return fmt.Errorf("%w: %s", errs.ErrTargetIDNotFound, id)
 	}
 
-	return ok, errs
+	return target.Execute(ctx, j)
 }
 
 func (ts *Targets) ShutdownAll() (bool, map[string]error) {

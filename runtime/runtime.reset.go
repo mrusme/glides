@@ -25,16 +25,3 @@ func ValidateResetTime(token string, now time.Time) error {
 
 	return nil
 }
-
-func (rt *Runtime) Reset() (err error) {
-	rt.Debug("status", "exec")
-	rt.Warn("reset", "clearing database")
-
-	if err = rt.Database().Reset(); err != nil {
-		rt.Error("status", "error", "error", err)
-		return err
-	}
-
-	rt.Info("status", "ok", "reset", "database cleared")
-	return nil
-}

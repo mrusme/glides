@@ -5,15 +5,19 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"os"
-	runt "runtime"
 	"strings"
 
 	"xn--gckvb8fzb.com/glides/services/config"
-	"xn--gckvb8fzb.com/glides/services/database"
 )
+
+const (
+	ModeDevelopment string = config.ModeDevelopment
+	ModeProduction  string = config.ModeProduction
+)
+
+const DefaultLoggingLevel slog.Level = slog.LevelInfo
 
 type Build struct {
 	version string
@@ -33,6 +37,9 @@ type Runtime struct {
 	build  Build
 	embeds map[string]*embed.FS
 
+	cfg    *config.Config
+	logger *slog.Logger
+
 	services map[string]any
 	order    []string
 
@@ -41,80 +48,71 @@ type Runtime struct {
 
 	onStartup  []Hook
 	onShutdown []Hook
+
+	configStarted bool
+	started       []string
+	hooksReached  bool
 }
 
-const (
-	ModeDevelopment string = "development"
-	ModeProduction  string = "production"
-)
-
 type Opts struct {
-	Cfgstr   string
-	Version  string
-	Commit   string
-	Date     string
-	Database bool
+	Cfgstr  string
+	Version string
+	Commit  string
+	Date    string
 }
 
 func New(opts Opts) (rt *Runtime, err error) {
-	var srv any
 	rt = new(Runtime)
 
-	rt.build.version = opts.Version
-	rt.build.commit = opts.Commit
-	rt.build.date = opts.Date
-	rt.build.hash = rt.computeBuildHash(rt.build.commit, rt.build.date)
-
+	rt.build = newBuild(opts.Version, opts.Commit, opts.Date)
 	rt.embeds = make(map[string]*embed.FS)
-
 	rt.services = make(map[string]any)
 
-	if srv, err = config.New(opts.Cfgstr); err != nil {
-		return nil, err
-	}
-	rt.AddService("_config", srv)
-
-	rt.loggerLevel = slog.Level(0)
-	if err = rt.loggerLevel.UnmarshalText(rt.Config().LoggingLevel()); err != nil {
+	if rt.cfg, err = config.New(opts.Cfgstr); err != nil {
 		return nil, err
 	}
 
-	srv = slog.New(
+	if rt.loggerLevel, err = parseLevel(rt.cfg.LoggingLevel()); err != nil {
+		return nil, err
+	}
+
+	rt.logger = slog.New(
 		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 			Level: rt.loggerLevel,
 		}),
 	)
-	rt.AddService("_logger", srv)
+	rt.ALogger = NewAsyncLogger(rt.logger)
 
-	rt.ALogger = NewAsyncLogger(rt.Logger())
-
-	rt.Config().OnReloadError(func(rerr error) {
-		rt.Logger().Error("Config.Reload", "status", "error", "error", rerr)
+	rt.cfg.OnReloadError(func(rerr error) {
+		rt.logger.Error("Config.Reload", "status", "error", "error", rerr)
 	})
 
-	rt.Debug("status", "exec")
-
-	if opts.Database {
-		rt.Debug("new", "database")
-		if srv, err = database.New(
-			rt.Logger(),
-			rt.Config().DatabaseConnection(),
-		); err != nil {
-			rt.Error("status", "error", "error", err)
-			return nil, err
-		}
-		rt.AddService("_database", srv)
-	}
-
 	rt.Info("status", "ok")
-	return rt, err
+	return rt, nil
 }
 
-func (rt *Runtime) SetBuild(version string, commit string, date string) {
-	rt.build.version = version
-	rt.build.commit = commit
-	rt.build.date = date
-	rt.build.hash = rt.computeBuildHash(commit, date)
+func parseLevel(text string) (level slog.Level, err error) {
+	if text == "" {
+		return DefaultLoggingLevel, nil
+	}
+
+	err = level.UnmarshalText([]byte(text))
+	return level, err
+}
+
+func newBuild(version string, commit string, date string) Build {
+	return Build{
+		version: version,
+		commit:  commit,
+		date:    date,
+		hash:    computeBuildHash(commit, date),
+	}
+}
+
+func computeBuildHash(args ...string) string {
+	h := sha256.New()
+	h.Write([]byte(strings.Join(args, "")))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (rt *Runtime) GetBuild() (
@@ -135,8 +133,7 @@ func (rt *Runtime) GetLogLevel() (lvl slog.Level) {
 
 func (rt *Runtime) NilOrDie(err error) {
 	if err != nil {
-		fn := rt.getLogFnName(2)
-		rt.Logger().Error(fn, "error", err)
+		rt.logger.Error(rt.getLogFnName(2), "error", err)
 		rt.Exit(1)
 	}
 }
@@ -146,79 +143,12 @@ func (rt *Runtime) Exit(code int) {
 	os.Exit(code)
 }
 
-func (rt *Runtime) getLogFnName(skip int) string {
-	pc, _, _, ok := runt.Caller(skip)
-	if !ok {
-		return "Unknown"
-	}
-	fn := runt.FuncForPC(pc)
-	if fn == nil {
-		return "Unknown"
-	}
-	fullName := trimClosures(trimTypeArgs(fn.Name()))
-	fullSplit := strings.Split(fullName, ".")
-	fSL := len(fullSplit)
-
-	if fSL == 1 {
-		return fullSplit[0]
-	} else if fSL > 1 {
-		pkg := fullSplit[fSL-2]
-		if strings.Contains(pkg, "/") {
-			pkgs := strings.Split(pkg, "/")
-			pkg = pkgs[len(pkgs)-1]
-		}
-		if strings.Contains(pkg, "(") {
-			pkg = strings.ReplaceAll(pkg, "(", "")
-			pkg = strings.ReplaceAll(pkg, ")", "")
-			pkg = strings.ReplaceAll(pkg, "*", "")
-		}
-		mtd := fullSplit[fSL-1]
-		return fmt.Sprintf("%s.%s", pkg, mtd)
-	}
-
-	return "Unknown"
-}
-
-func trimTypeArgs(name string) string {
-	open := strings.Index(name, "[")
-	if open == -1 {
-		return name
-	}
-
-	close := strings.LastIndex(name, "]")
-	if close < open {
-		return name[:open]
-	}
-
-	return name[:open] + name[close+1:]
-}
-
-func trimClosures(name string) string {
-	for {
-		idx := strings.LastIndex(name, ".")
-		if idx == -1 {
-			return name
-		}
-
-		last := name[idx+1:]
-		if !strings.HasPrefix(last, "func") {
-			return name
-		}
-		if strings.Trim(last[len("func"):], "0123456789") != "" {
-			return name
-		}
-
-		name = name[:idx]
-	}
-}
-
 func (rt *Runtime) log(level slog.Level, args []any) {
-	logger := rt.Logger()
-	if !logger.Enabled(context.Background(), level) {
+	if !rt.logger.Enabled(context.Background(), level) {
 		return
 	}
 
-	logger.Log(context.Background(), level, rt.getLogFnName(3), args...)
+	rt.logger.Log(context.Background(), level, rt.getLogFnName(3), args...)
 }
 
 func (rt *Runtime) Debug(args ...any) {
@@ -237,13 +167,6 @@ func (rt *Runtime) Error(args ...any) {
 	rt.log(slog.LevelError, args)
 }
 
-func (rt *Runtime) computeBuildHash(args ...string) string {
-	h := sha256.New()
-	h.Write([]byte(strings.Join(args, "")))
-	hashBytes := h.Sum(nil)
-	return hex.EncodeToString(hashBytes)
-}
-
 func (rt *Runtime) IsDevelopmentMode() bool {
-	return rt.Config().GeneralMode() == ModeDevelopment
+	return rt.cfg.GeneralMode() == ModeDevelopment
 }

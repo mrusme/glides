@@ -1,20 +1,26 @@
 package config
 
 import (
+	"fmt"
 	"net/url"
+	"strings"
 	"sync/atomic"
 
 	"github.com/knadh/koanf/parsers/toml/v2"
 	"github.com/knadh/koanf/providers/file"
-	"xn--gckvb8fzb.com/glides/errs"
-
 	"github.com/knadh/koanf/v2"
+	"xn--gckvb8fzb.com/glides/errs"
+)
+
+const (
+	ModeDevelopment string = "development"
+	ModeProduction  string = "production"
 )
 
 type Config struct {
 	cfgstr   string
 	k        atomic.Pointer[koanf.Koanf]
-	provider koanf.Provider
+	provider *file.File
 	onError  func(error)
 }
 
@@ -44,9 +50,22 @@ func (cfg *Config) load() (err error) {
 		return err
 	}
 
+	if err = validate(k); err != nil {
+		return err
+	}
+
 	cfg.k.Store(k)
 
 	return nil
+}
+
+func validate(k *koanf.Koanf) error {
+	switch mode := strings.ToLower(k.String("General.Mode")); mode {
+	case "", ModeDevelopment, ModeProduction:
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", errs.ErrConfigModeInvalid, mode)
+	}
 }
 
 func (cfg *Config) OnReloadError(fn func(error)) {
@@ -60,7 +79,7 @@ func (cfg *Config) reloadFailed(err error) {
 }
 
 func (cfg *Config) Startup() (err error) {
-	cfg.provider.(*file.File).Watch(func(event any, werr error) {
+	return cfg.provider.Watch(func(event any, werr error) {
 		if werr != nil {
 			cfg.reloadFailed(werr)
 			return
@@ -70,13 +89,10 @@ func (cfg *Config) Startup() (err error) {
 			cfg.reloadFailed(lerr)
 		}
 	})
-
-	return nil
 }
 
 func (cfg *Config) Shutdown() error {
-	cfg.provider.(*file.File).Unwatch()
-	return nil
+	return cfg.provider.Unwatch()
 }
 
 func (cfg *Config) Koanf() *koanf.Koanf {
@@ -106,7 +122,6 @@ func (cfg *Config) Strings(v string) []string {
 	return cfg.k.Load().Strings(v)
 }
 
-func (cfg *Config) Unmarshal(path string, o any) (x any, err error) {
-	err = cfg.k.Load().Unmarshal(path, o)
-	return o, err
+func (cfg *Config) Unmarshal(path string, o any) error {
+	return cfg.k.Load().Unmarshal(path, o)
 }

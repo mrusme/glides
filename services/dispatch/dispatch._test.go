@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"xn--gckvb8fzb.com/glides/errs"
+	"xn--gckvb8fzb.com/glides/models/asyncjob"
 	"xn--gckvb8fzb.com/glides/services/config"
 )
 
@@ -164,5 +165,39 @@ func TestRoutingPropagatesAResolverError(t *testing.T) {
 
 	if _, err := disp.routing(); !errors.Is(err, want) {
 		t.Errorf("routing() error = %v, want %v", err, want)
+	}
+}
+
+func TestJobBeforeStartupIsAnError(t *testing.T) {
+	disp, err := New(config.Redis{}, config.Targets{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err = disp.Job(asyncjob.New("t", "type", "sub")); !errors.Is(err, errs.ErrDispatchNotStarted) {
+		t.Errorf("Job before Startup = %v, want %v", err, errs.ErrDispatchNotStarted)
+	}
+	if err = disp.Shutdown(); err != nil {
+		t.Errorf("Shutdown before Startup = %v", err)
+	}
+}
+
+func TestBatchReportsPayloadsWithoutATarget(t *testing.T) {
+	disp, err := New(config.Redis{}, config.Targets{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	disp.SetResolver(stubResolver{routing: Routing{EmailTargetID: "notifications"}})
+
+	err = Batch(disp, "notification", "reply", []string{"someone@example.org"},
+		func(string) bool { return true })
+	if !errors.Is(err, errs.ErrTargetIDNotFound) {
+		t.Errorf("Batch without an xmpp target = %v, want %v", err, errs.ErrTargetIDNotFound)
+	}
+
+	err = Batch(disp, "notification", "reply", []string{"someone@example.org"},
+		func(string) bool { return false })
+	if !errors.Is(err, errs.ErrDispatchNotStarted) {
+		t.Errorf("Batch with an email target = %v, want the enqueue to be reached", err)
 	}
 }

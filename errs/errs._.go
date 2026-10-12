@@ -9,8 +9,20 @@ var (
 	ErrConfigTypeUnsupported error = errors.New(
 		"err_config_type_unsupported",
 	)
+	ErrConfigModeInvalid error = errors.New(
+		"err_config_mode_invalid",
+	)
+	ErrProcessState error = errors.New(
+		"err_process_state",
+	)
 	ErrIfaceInvalid error = errors.New(
 		"err_iface_invalid",
+	)
+	ErrServiceNotFound error = errors.New(
+		"err_service_not_found",
+	)
+	ErrEmbedNotFound error = errors.New(
+		"err_embed_not_found",
 	)
 	ErrNoRows error = errors.New(
 		"no_rows",
@@ -36,6 +48,9 @@ var (
 	ErrStorageIDNotFound error = errors.New(
 		"err_storage_id_not_found",
 	)
+	ErrStorageIDDuplicate error = errors.New(
+		"err_storage_id_duplicate",
+	)
 	ErrStorageTypeInvalid error = errors.New(
 		"err_storage_type_invalid",
 	)
@@ -44,6 +59,9 @@ var (
 	)
 	ErrTargetIDNotFound error = errors.New(
 		"err_target_id_not_found",
+	)
+	ErrTargetIDDuplicate error = errors.New(
+		"err_target_id_duplicate",
 	)
 	ErrNoSuchTargetType error = errors.New(
 		"err_no_such_target_type",
@@ -56,6 +74,9 @@ var (
 	)
 	ErrJobPayloadInvalid error = errors.New(
 		"err_job_payload_invalid",
+	)
+	ErrDispatchNotStarted error = errors.New(
+		"err_dispatch_not_started",
 	)
 	ErrDispatchResolverMissing error = errors.New(
 		"err_dispatch_resolver_missing",

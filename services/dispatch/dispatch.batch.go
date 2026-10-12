@@ -1,6 +1,9 @@
 package dispatch
 
 import (
+	"fmt"
+
+	"xn--gckvb8fzb.com/glides/errs"
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 )
 
@@ -17,8 +20,13 @@ func Batch[P any](
 	}
 
 	byTarget := make(map[string][]P)
+	unrouted := 0
 	for _, payload := range payloads {
 		targetID := r.TargetIDFor(isJID(payload))
+		if targetID == "" {
+			unrouted++
+			continue
+		}
 		byTarget[targetID] = append(byTarget[targetID], payload)
 	}
 
@@ -31,6 +39,11 @@ func Batch[P any](
 		if err = disp.Job(j); err != nil {
 			return err
 		}
+	}
+
+	if unrouted > 0 {
+		return fmt.Errorf("%w: %d of %d payloads have no target",
+			errs.ErrTargetIDNotFound, unrouted, len(payloads))
 	}
 
 	return nil

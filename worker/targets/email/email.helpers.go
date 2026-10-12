@@ -1,22 +1,11 @@
 package email
 
 import (
-	"fmt"
-	"strings"
+	"context"
 
 	"github.com/wneessen/go-mail"
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 )
-
-func (t *Email) AddPlusToAddr(email string, plus string) (plusemail string) {
-	splitAddr := strings.Split(email, "@")
-	plusemail = fmt.Sprintf("%s+%s@%s",
-		splitAddr[0],
-		plus,
-		splitAddr[1],
-	)
-	return plusemail
-}
 
 func (t *Email) PrepareMessage(
 	jobType asyncjob.JobType,
@@ -53,7 +42,6 @@ func (t *Email) PrepareMessage(
 	message.SetBulk()
 	message.Subject(subject)
 
-	// Get templates
 	item, err := t.tmplCache.TemplatesFor(
 		jobType,
 		jobSubType,
@@ -62,16 +50,16 @@ func (t *Email) PrepareMessage(
 	if err != nil {
 		return nil, err
 	}
-	// Set text template
+
 	if err = message.SetBodyTextTemplate(
 		item.TextTmpl,
 		data,
 	); err != nil {
 		return nil, err
 	}
-	// Set html template
+
 	if err = message.AddAlternativeHTMLTemplate(
-		item.HtmlTmpl,
+		item.HTMLTmpl,
 		data,
 	); err != nil {
 		return nil, err
@@ -81,12 +69,10 @@ func (t *Email) PrepareMessage(
 }
 
 func (t *Email) SendMessages(
+	ctx context.Context,
 	messages []*mail.Msg,
 ) (err error) {
-	t.rt.Debug(
-		"execute", "send",
-		"messages", messages,
-	)
+	t.rt.Debug("execute", "send", "count", len(messages))
 
 	client, err := mail.NewClient(
 		t.def.Email.SMTPServer,
@@ -99,5 +85,5 @@ func (t *Email) SendMessages(
 		return err
 	}
 
-	return client.DialAndSend(messages...)
+	return client.DialAndSendWithContext(ctx, messages...)
 }

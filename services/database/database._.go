@@ -3,7 +3,10 @@ package database
 import (
 	"context"
 	"embed"
+	"io"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -12,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/tracelog"
 	pgxUUID "github.com/vgarvardt/pgx-google-uuid/v5"
 )
 
@@ -20,6 +24,8 @@ const (
 	StartupTimeout time.Duration = 5 * time.Second
 	ResetTimeout   time.Duration = 30 * time.Second
 )
+
+var nopCancel context.CancelFunc = func() {}
 
 type Database struct {
 	log        *slog.Logger
@@ -35,6 +41,10 @@ func New(
 	log *slog.Logger,
 	connection string,
 ) (db *Database, err error) {
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
 	db = new(Database)
 	db.log = log
 	db.connection = connection
@@ -49,7 +59,31 @@ func New(
 		return nil
 	}
 
+	if log.Enabled(context.Background(), slog.LevelDebug) {
+		db.poolcfg.ConnConfig.Tracer = &tracelog.TraceLog{
+			Logger:   tracelog.LoggerFunc(db.trace),
+			LogLevel: tracelog.LogLevelDebug,
+		}
+	}
+
 	return db, nil
+}
+
+func (db *Database) trace(
+	ctx context.Context,
+	level tracelog.LogLevel,
+	msg string,
+	data map[string]any,
+) {
+	attrs := make([]any, 0, 2*len(data))
+	for _, key := range slices.Sorted(maps.Keys(data)) {
+		if key == "args" {
+			continue
+		}
+		attrs = append(attrs, key, data[key])
+	}
+
+	db.log.Debug("Database."+msg, attrs...)
 }
 
 func (db *Database) SetMigrations(migrations *embed.FS) {
@@ -69,6 +103,11 @@ func (db *Database) Startup() (err error) {
 	if err = db.ping(); err != nil {
 		db.Shutdown()
 		return err
+	}
+
+	if db.migrations == nil {
+		db.log.Info("Database.Startup", "migrations", "none")
+		return nil
 	}
 
 	if err = db.migrate(); err != nil {
@@ -130,20 +169,22 @@ func (db *Database) Shutdown() error {
 }
 
 func (db *Database) Reset() (err error) {
-	if db.pool, err = newPool(db); err != nil {
-		db.pool = nil
+	db.log.Warn("Database.Reset", "status", "clearing database")
+
+	pool, err := newPool(db)
+	if err != nil {
 		return err
 	}
-	defer db.Shutdown()
+	defer pool.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), ResetTimeout)
 	defer cancel()
 
-	if err = db.pool.Ping(ctx); err != nil {
+	if err = pool.Ping(ctx); err != nil {
 		return err
 	}
 
-	tx, err := db.pool.Begin(ctx)
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -156,14 +197,20 @@ func (db *Database) Reset() (err error) {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	db.log.Info("Database.Reset", "status", "ok")
+
+	return nil
 }
 
 func (db *Database) deadline(
 	ctx context.Context,
 ) (context.Context, context.CancelFunc) {
 	if _, ok := ctx.Deadline(); ok {
-		return ctx, func() {}
+		return ctx, nopCancel
 	}
 
 	return context.WithTimeout(ctx, db.timeout)

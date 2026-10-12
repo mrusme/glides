@@ -9,7 +9,7 @@ import (
 	"xn--gckvb8fzb.com/glides/models/asyncjob/cron/cronrun"
 )
 
-const CRON_RETENTION time.Duration = 1 * time.Hour
+const CronRetention time.Duration = 1 * time.Hour
 
 func (disp *Dispatch) CronRun(payload *cronrun.CronRun) (err error) {
 	j := asyncjob.New(
@@ -24,7 +24,7 @@ func (disp *Dispatch) CronRun(payload *cronrun.CronRun) (err error) {
 	err = disp.enqueue(j, TaskCron,
 		asynq.Queue(QueueCron),
 		asynq.TaskID(payload.TaskID()),
-		asynq.Retention(CRON_RETENTION),
+		asynq.Retention(CronRetention),
 	)
 	if errors.Is(err, asynq.ErrTaskIDConflict) {
 		return nil

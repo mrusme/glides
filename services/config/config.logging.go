@@ -1,5 +1,5 @@
 package config
 
-func (cfg *Config) LoggingLevel() []byte {
-	return cfg.k.Load().Bytes("Logging.Level")
+func (cfg *Config) LoggingLevel() string {
+	return cfg.k.Load().String("Logging.Level")
 }

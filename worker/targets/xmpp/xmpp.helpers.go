@@ -1,6 +1,8 @@
 package xmpp
 
 import (
+	"context"
+
 	goxmpp "github.com/xmppo/go-xmpp"
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 )
@@ -19,7 +21,6 @@ func (t *XMPP) PrepareMessage(
 
 	message.To(rcptAddress)
 
-	// Get templates
 	item, err := t.tmplCache.TemplatesFor(
 		jobType,
 		jobSubType,
@@ -28,7 +29,7 @@ func (t *XMPP) PrepareMessage(
 	if err != nil {
 		return nil, err
 	}
-	// Set text template
+
 	if err = message.SetBodyTextTemplate(
 		item.TextTmpl,
 		data,
@@ -40,17 +41,19 @@ func (t *XMPP) PrepareMessage(
 }
 
 func (t *XMPP) SendMessages(
+	ctx context.Context,
 	messages []*Msg,
 ) (err error) {
-	t.rt.Debug(
-		"execute", "send",
-		"messages", messages,
-	)
+	t.rt.Debug("execute", "send", "count", len(messages))
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	for _, message := range messages {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+
 		if err = t.ensureConnected(); err != nil {
 			return err
 		}

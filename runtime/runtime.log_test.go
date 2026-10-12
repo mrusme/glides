@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"testing"
 )
@@ -10,7 +11,7 @@ import (
 func testRuntime(buf *bytes.Buffer, level slog.Level) *Runtime {
 	rt := new(Runtime)
 	rt.services = make(map[string]any)
-	rt.AddService("_logger", slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: level})))
+	rt.logger = slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: level}))
 
 	return rt
 }
@@ -43,6 +44,26 @@ func TestLogNamesItsCaller(t *testing.T) {
 	}
 }
 
+type named struct{ rt *Runtime }
+
+func (n *named) Method() { n.rt.Info("status", "ok") }
+
+func TestLogNamesAMethodByItsType(t *testing.T) {
+	var buf bytes.Buffer
+	rt := testRuntime(&buf, slog.LevelDebug)
+
+	(&named{rt: rt}).Method()
+	if got := lastMessage(t, &buf); got != "named.Method" {
+		t.Errorf("a method logged under %q", got)
+	}
+
+	buf.Reset()
+	func() { rt.Info("status", "ok") }()
+	if got := lastMessage(t, &buf); got != "runtime.TestLogNamesAMethodByItsType" {
+		t.Errorf("a closure logged under %q", got)
+	}
+}
+
 func TestLogSkipsDisabledLevels(t *testing.T) {
 	var buf bytes.Buffer
 	rt := testRuntime(&buf, slog.LevelWarn)
@@ -61,5 +82,51 @@ func TestLogSkipsDisabledLevels(t *testing.T) {
 	allocs := testing.AllocsPerRun(100, func() { rt.Debug("status", "ok") })
 	if allocs > 1 {
 		t.Errorf("a disabled Debug costs %.0f allocations", allocs)
+	}
+}
+
+func TestLogResolvesTheCallerOnce(t *testing.T) {
+	var buf bytes.Buffer
+	rt := testRuntime(&buf, slog.LevelDebug)
+
+	rt.Info("status", "warm")
+	allocs := testing.AllocsPerRun(100, func() { buf.Reset(); rt.Info("status", "ok") })
+	if allocs > 1 {
+		t.Errorf("an enabled Info costs %.0f allocations after the first call", allocs)
+	}
+}
+
+func TestShortFnName(t *testing.T) {
+	for in, want := range map[string]string{
+		"xn--gckvb8fzb.com/glides/runtime.New":                                "runtime.New",
+		"xn--gckvb8fzb.com/glides/worker.(*Worker).HandleJob":                 "Worker.HandleJob",
+		"xn--gckvb8fzb.com/glides/worker/targets/debug.HandlerFor[...].func1": "debug.HandlerFor",
+		"main.main": "main.main",
+		"":          "Unknown",
+		"nodots":    "nodots",
+	} {
+		if got := shortFnName(in); got != want {
+			t.Errorf("shortFnName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func BenchmarkInfo(b *testing.B) {
+	rt := new(Runtime)
+	rt.services = make(map[string]any)
+	rt.logger = slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	b.ReportAllocs()
+
+	for b.Loop() {
+		rt.Info("status", "ok")
+	}
+}
+
+func BenchmarkPlainSlogInfo(b *testing.B) {
+	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	b.ReportAllocs()
+
+	for b.Loop() {
+		logger.Info("runtime.BenchmarkPlainSlogInfo", "status", "ok")
 	}
 }

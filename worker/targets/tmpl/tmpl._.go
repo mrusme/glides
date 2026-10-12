@@ -13,17 +13,17 @@ import (
 type Spec struct {
 	Dir     string
 	TextExt string
-	HtmlExt string
+	HTMLExt string
 }
 
 var (
-	EmailSpec = Spec{Dir: "email", TextExt: ".eml", HtmlExt: ".html"}
+	EmailSpec = Spec{Dir: "email", TextExt: ".eml", HTMLExt: ".html"}
 	XMPPSpec  = Spec{Dir: "xmpp", TextExt: ".md"}
 )
 
 type Item struct {
 	TextTmpl *texttemplate.Template
-	HtmlTmpl *htmltemplate.Template
+	HTMLTmpl *htmltemplate.Template
 }
 
 type Cache struct {
@@ -88,12 +88,12 @@ func (c *Cache) load(base string) (item Item, err error) {
 		return Item{}, err
 	}
 
-	if c.spec.HtmlExt == "" {
+	if c.spec.HTMLExt == "" {
 		return item, nil
 	}
 
-	if item.HtmlTmpl, err = htmltemplate.ParseFS(
-		c.fsys, base+c.spec.HtmlExt,
+	if item.HTMLTmpl, err = htmltemplate.ParseFS(
+		c.fsys, base+c.spec.HTMLExt,
 	); err != nil {
 		return Item{}, err
 	}

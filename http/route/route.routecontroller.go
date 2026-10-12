@@ -1,8 +1,6 @@
 package route
 
 import (
-	"strings"
-
 	"github.com/gofiber/fiber/v3"
 	"xn--gckvb8fzb.com/glides/runtime"
 )
@@ -21,18 +19,14 @@ type RouteController struct {
 	Env     *Environment
 }
 
-func GetReservedBasePaths(app *fiber.App) []string {
-	var reserved []string
+func (rc *RouteController) GetRuntime() *runtime.Runtime {
+	return rc.Runtime
+}
 
-	froutes := app.GetRoutes(true)
-	for _, r := range froutes {
-		sr := strings.Split(r.Path, "/")
-		if len(sr) >= 2 {
-			if sr[1][0] != ':' {
-				reserved = append(reserved, sr[1])
-			}
-		}
-	}
+func (rc *RouteController) GetPath() string {
+	return rc.Path
+}
 
-	return reserved
+func (rc *RouteController) GetEnv() *Environment {
+	return rc.Env
 }
