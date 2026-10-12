@@ -1,7 +1,7 @@
-.PHONY: all help fmt vet lint test test-race vulncheck check
+.PHONY: all help fmt fix tidy vet lint test test-race vulncheck check
 
-STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
-GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.7.0-0.dev.0.20261009230814-452d5bb86b45
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
 all: check
 
@@ -10,6 +10,12 @@ help: ## print this help
 
 fmt: ## fail if gofmt would change a file
 	@files="$$(gofmt -l .)"; if [ -n "$$files" ]; then echo "$$files"; exit 1; fi
+
+fix: ## fail if go fix would change a file
+	go fix -diff ./...
+
+tidy: ## fail if go mod tidy would change go.mod or go.sum
+	go mod tidy -diff
 
 vet: ## vet
 	go vet ./...
@@ -26,4 +32,4 @@ test-race: ## test with the race detector
 vulncheck: ## govulncheck
 	go run $(GOVULNCHECK) ./...
 
-check: fmt vet lint test-race vulncheck ## everything CI runs, use make -k to see all failures
+check: fmt fix tidy vet lint test-race vulncheck ## everything CI runs, use make -k to see all failures

@@ -99,11 +99,11 @@ func (r Route) Fill(params map[string]string) (rt Route) {
 	var filledHierarchy []string
 
 	for _, segment := range r.Hierarchy {
-		cidx := strings.Index(segment, ":")
-		if cidx > -1 {
-			segmentVar := segment[cidx+1:]
+		before, after, ok := strings.Cut(segment, ":")
+		if ok {
+			segmentVar := after
 			if filler, ok := params[segmentVar]; ok {
-				filledHierarchy = append(filledHierarchy, segment[0:cidx]+filler)
+				filledHierarchy = append(filledHierarchy, before+filler)
 			} else {
 				filledHierarchy = append(filledHierarchy, segment)
 			}
@@ -147,15 +147,15 @@ func CollidesWithRoute(path string) bool {
 		}
 
 		top := strings.ToLower(r.Hierarchy[1])
-		cidx := strings.Index(top, ":")
-		if cidx == -1 {
+		before, _, ok := strings.Cut(top, ":")
+		if !ok {
 			if seg == top {
 				return true
 			}
 			continue
 		}
 
-		prefix := top[:cidx]
+		prefix := before
 		if prefix == "" || strings.HasPrefix(seg, prefix) {
 			return true
 		}

@@ -173,15 +173,13 @@ func TestConcurrentTemplatesFor(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := c.TemplatesFor(
 				confirmation, signup, "en",
 			); err != nil {
 				t.Errorf("TemplatesFor: %v", err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

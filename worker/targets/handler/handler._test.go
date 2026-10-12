@@ -96,15 +96,13 @@ func TestConcurrentExecute(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := h.Execute(asyncjob.AsyncJob{
 				Type: confirmation, SubType: signup,
 			}); err != nil {
 				t.Errorf("Execute: %v", err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

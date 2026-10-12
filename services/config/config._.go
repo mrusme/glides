@@ -60,7 +60,7 @@ func (cfg *Config) reloadFailed(err error) {
 }
 
 func (cfg *Config) Startup() (err error) {
-	cfg.provider.(*file.File).Watch(func(event interface{}, werr error) {
+	cfg.provider.(*file.File).Watch(func(event any, werr error) {
 		if werr != nil {
 			cfg.reloadFailed(werr)
 			return

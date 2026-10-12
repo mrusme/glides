@@ -49,9 +49,7 @@ func TestReload(t *testing.T) {
 	stop := make(chan struct{})
 	var readers sync.WaitGroup
 	for range 8 {
-		readers.Add(1)
-		go func() {
-			defer readers.Done()
+		readers.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -63,7 +61,7 @@ func TestReload(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	write("[General]\nMode = \"development\"\n")

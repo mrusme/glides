@@ -94,8 +94,6 @@ func (db *Database) QueryRow(
 }
 
 func (db *Database) ConvertError(err error) error {
-	var pgErr *pgconn.PgError
-
 	if err == nil {
 		return err
 	}
@@ -104,7 +102,7 @@ func (db *Database) ConvertError(err error) error {
 		return errs.ErrNoRows
 	}
 
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch {
 		case pgErr.Code == pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w_%s", errs.ErrUniqueViolationOn, pgErr.ConstraintName)

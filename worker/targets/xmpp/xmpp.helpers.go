@@ -13,7 +13,7 @@ func (t *XMPP) PrepareMessage(
 	rcptAddress string,
 	lang string,
 	subject string,
-	data interface{},
+	data any,
 ) (message *Msg, err error) {
 	message = NewMsg()
 

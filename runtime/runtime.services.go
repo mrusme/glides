@@ -3,6 +3,7 @@ package runtime
 import (
 	"errors"
 	"log/slog"
+	"slices"
 
 	"xn--gckvb8fzb.com/glides/services/config"
 	"xn--gckvb8fzb.com/glides/services/database"
@@ -100,16 +101,15 @@ func (rt *Runtime) Startup() (err error) {
 func (rt *Runtime) Shutdown() (err error) {
 	rt.Debug("status", "exec")
 
-	for idx := len(rt.onShutdown) - 1; idx >= 0; idx-- {
+	for idx, v := range slices.Backward(rt.onShutdown) {
 		rt.Debug("shutdown", "hook", "index", idx)
-		if err = rt.onShutdown[idx](); err != nil {
+		if err = v(); err != nil {
 			rt.Error("status", "error", "error", err)
 			return err
 		}
 	}
 
-	for idx := len(rt.order) - 1; idx >= 0; idx-- {
-		id := rt.order[idx]
+	for _, id := range slices.Backward(rt.order) {
 		rt.Debug("shutdown", id)
 		if err = rt.services[id].(Service).Shutdown(); err != nil {
 			rt.Error("status", "error", "service", id, "error", err)

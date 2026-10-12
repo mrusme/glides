@@ -19,7 +19,7 @@ func (msg *Msg) To(to string) {
 	msg.to = to
 }
 
-func (msg *Msg) SetBodyTextTemplate(tpl *texttemplate.Template, data interface{}) (err error) {
+func (msg *Msg) SetBodyTextTemplate(tpl *texttemplate.Template, data any) (err error) {
 	var sb strings.Builder
 	if err = tpl.Execute(&sb, data); err != nil {
 		return err

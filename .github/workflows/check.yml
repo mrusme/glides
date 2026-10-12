@@ -18,6 +18,14 @@ jobs:
     - name: Format
       run: make fmt
 
+    - name: Fix
+      if: ${{ !cancelled() }}
+      run: make fix
+
+    - name: Tidy
+      if: ${{ !cancelled() }}
+      run: make tidy
+
     - name: Vet
       if: ${{ !cancelled() }}
       run: make vet
