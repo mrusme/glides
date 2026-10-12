@@ -75,19 +75,28 @@ func trimTypeArgs(name string) string {
 
 func trimClosures(name string) string {
 	for {
-		idx := strings.LastIndex(name, ".")
-		if idx == -1 {
+		trimmed, ok := trimNumbered(name, ".func")
+		if !ok {
+			trimmed, ok = trimNumbered(name, "-range")
+		}
+		if !ok {
 			return name
 		}
 
-		last := name[idx+1:]
-		if !strings.HasPrefix(last, "func") {
-			return name
-		}
-		if strings.Trim(last[len("func"):], "0123456789") != "" {
-			return name
-		}
-
-		name = name[:idx]
+		name = trimmed
 	}
+}
+
+func trimNumbered(name string, marker string) (string, bool) {
+	idx := strings.LastIndex(name, marker)
+	if idx == -1 {
+		return name, false
+	}
+
+	digits := name[idx+len(marker):]
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return name, false
+	}
+
+	return name[:idx], true
 }

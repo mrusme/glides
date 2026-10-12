@@ -101,9 +101,12 @@ func TestShortFnName(t *testing.T) {
 		"xn--gckvb8fzb.com/glides/runtime.New":                                "runtime.New",
 		"xn--gckvb8fzb.com/glides/worker.(*Worker).HandleJob":                 "Worker.HandleJob",
 		"xn--gckvb8fzb.com/glides/worker/targets/debug.HandlerFor[...].func1": "debug.HandlerFor",
-		"main.main": "main.main",
-		"":          "Unknown",
-		"nodots":    "nodots",
+		"xn--gckvb8fzb.com/glides/runtime.(*Runtime).shutdown-range1":         "Runtime.shutdown",
+		"main.main-range2.func1":                                              "main.main",
+		"main.funcs.Run":                                                      "funcs.Run",
+		"main.main":                                                           "main.main",
+		"":                                                                    "Unknown",
+		"nodots":                                                              "nodots",
 	} {
 		if got := shortFnName(in); got != want {
 			t.Errorf("shortFnName(%q) = %q, want %q", in, got, want)
