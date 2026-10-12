@@ -82,8 +82,8 @@ func TestHelpersCollectRowsAndValues(t *testing.T) {
 	}
 
 	none, err := Rows[probe](ctx, db, series+` WHERE n = $1`, 9)
-	if err != nil || len(none) != 0 {
-		t.Errorf("Rows without a match = %+v, %v, want none", none, err)
+	if err != nil || none == nil || len(none) != 0 {
+		t.Errorf("Rows without a match = %#v, %v, want an empty slice", none, err)
 	}
 
 	total, err := Value[int64](ctx, db, `SELECT count(*) FROM generate_series(1, 3)`)
@@ -98,6 +98,10 @@ func TestHelpersCollectRowsAndValues(t *testing.T) {
 	numbers, err := Values[int](ctx, db, `SELECT n FROM generate_series(1, 3) AS n`)
 	if err != nil || len(numbers) != 3 || numbers[0] != 1 {
 		t.Errorf("Values = %v, %v", numbers, err)
+	}
+
+	if numbers, err = Values[int](ctx, db, `SELECT 1 WHERE false`); err != nil || numbers == nil || len(numbers) != 0 {
+		t.Errorf("Values without a match = %#v, %v, want an empty slice", numbers, err)
 	}
 
 	tag, err := Exec(ctx, db, `SELECT 1`)
