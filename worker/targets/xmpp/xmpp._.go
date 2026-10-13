@@ -1,19 +1,24 @@
 package xmpp
 
 import (
-	"crypto/tls"
 	"fmt"
-	"net"
 	"sync"
 
 	"xn--gckvb8fzb.com/glides/errs"
+	"xn--gckvb8fzb.com/glides/helpers/xmppclient"
 	"xn--gckvb8fzb.com/glides/runtime"
 	"xn--gckvb8fzb.com/glides/services/config"
 	"xn--gckvb8fzb.com/glides/worker/targets/handler"
 	"xn--gckvb8fzb.com/glides/worker/targets/tmpl"
-
-	goxmpp "github.com/xmppo/go-xmpp"
 )
+
+type client interface {
+	Send(to string, body string) error
+	Ping() error
+	Close() error
+	Done() <-chan struct{}
+	SetOnMessage(fn func(xmppclient.Message))
+}
 
 type XMPP struct {
 	handler.Handlers
@@ -22,10 +27,12 @@ type XMPP struct {
 	def       config.Target
 	tmplCache *tmpl.Cache
 
-	jabberOpts goxmpp.Options
+	opts      xmppclient.Options
+	dial      func(opts xmppclient.Options) (client, error)
+	onMessage func(xmppclient.Message)
 
 	mu     sync.Mutex
-	jabber *goxmpp.Client
+	client client
 }
 
 func New(
@@ -42,40 +49,41 @@ func New(
 	t.rt = rt
 	t.def = def
 	t.tmplCache = tmpl.NewCache(templates, tmpl.XMPPSpec)
+	t.dial = func(opts xmppclient.Options) (client, error) {
+		c, err := xmppclient.Dial(rt.Logger(), opts)
+		if err != nil {
+			return nil, err
+		}
 
-	return t, nil
-}
-
-func serverName(server string) string {
-	if host, _, err := net.SplitHostPort(server); err == nil {
-		return host
+		return c, nil
 	}
 
-	return server
+	return t, nil
 }
 
 func (t *XMPP) Load() error {
 	t.rt.Info("load target", "xmpp", "id", t.def.ID)
 	t.rt.Debug("config", t.def)
 
-	t.jabberOpts = goxmpp.Options{
-		Host:     t.def.XMPP.Server,
-		User:     t.def.XMPP.Username,
-		Password: t.def.XMPP.Password,
-		NoTLS:    true,
-		StartTLS: true,
-		TLSConfig: &tls.Config{
-			ServerName:         serverName(t.def.XMPP.Server),
-			InsecureSkipVerify: t.def.XMPP.InsecureSkipVerify,
-		},
-		Debug:               t.rt.IsDevelopmentMode(),
-		Session:             true,
-		Status:              "chat",
-		StatusMessage:       "",
-		PeriodicServerPings: true,
+	t.opts = xmppclient.Options{
+		Host:               t.def.XMPP.Server,
+		User:               t.def.XMPP.Username,
+		Password:           t.def.XMPP.Password,
+		InsecureSkipVerify: t.def.XMPP.InsecureSkipVerify,
+		Debug:              t.rt.IsDevelopmentMode(),
 	}
 
 	return nil
+}
+
+func (t *XMPP) OnMessage(fn func(xmppclient.Message)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.onMessage = fn
+	if t.client != nil {
+		t.client.SetOnMessage(fn)
+	}
 }
 
 func (t *XMPP) Run() error {
@@ -84,9 +92,9 @@ func (t *XMPP) Run() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if err := t.reconnect(); err != nil {
+	if err := t.connect(); err != nil {
 		t.rt.Error("failed to connect, will retry on first send", "xmpp",
-			"host", t.jabberOpts.Host,
+			"host", t.opts.Host,
 			"error", err)
 	}
 
@@ -99,9 +107,7 @@ func (t *XMPP) Shutdown() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.jabber == nil {
-		return nil
-	}
+	t.disconnect()
 
-	return t.disconnect()
+	return nil
 }

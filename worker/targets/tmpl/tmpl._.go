@@ -11,14 +11,15 @@ import (
 )
 
 type Spec struct {
-	Dir     string
-	TextExt string
-	HTMLExt string
+	Dir      string
+	TextExt  string
+	HTMLExt  string
+	Fallback string
 }
 
 var (
-	EmailSpec = Spec{Dir: "email", TextExt: ".eml", HTMLExt: ".html"}
-	XMPPSpec  = Spec{Dir: "xmpp", TextExt: ".md"}
+	EmailSpec = Spec{Dir: "email", TextExt: ".eml", HTMLExt: ".html", Fallback: "en"}
+	XMPPSpec  = Spec{Dir: "xmpp", TextExt: ".md", Fallback: "en"}
 )
 
 type Item struct {
@@ -60,14 +61,20 @@ func (c *Cache) TemplatesFor(
 	jobSubType asyncjob.JobSubType,
 	lang string,
 ) (item Item, err error) {
-	base := c.base(jobType, jobSubType, lang)
+	requested := c.base(jobType, jobSubType, lang)
 
 	c.mu.RLock()
-	item, ok := c.items[base]
+	item, ok := c.items[requested]
 	c.mu.RUnlock()
-
 	if ok {
 		return item, nil
+	}
+
+	base := requested
+	if c.spec.Fallback != "" && lang != c.spec.Fallback {
+		if _, serr := fs.Stat(c.fsys, requested+c.spec.TextExt); serr != nil {
+			base = c.base(jobType, jobSubType, c.spec.Fallback)
+		}
 	}
 
 	if item, err = c.load(base); err != nil {
@@ -75,6 +82,7 @@ func (c *Cache) TemplatesFor(
 	}
 
 	c.mu.Lock()
+	c.items[requested] = item
 	c.items[base] = item
 	c.mu.Unlock()
 

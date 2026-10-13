@@ -168,6 +168,41 @@ func TestMissingTemplateErrors(t *testing.T) {
 	}
 }
 
+func TestMissingLanguageFallsBackToTheDefault(t *testing.T) {
+	c := NewCache(testFS(), EmailSpec)
+
+	item, err := c.TemplatesFor(notification, reply, "de")
+	if err != nil {
+		t.Fatalf("de: %v", err)
+	}
+	if got := renderText(t, item); got != "email notification reply en text" {
+		t.Errorf("de rendered %q, want the en template", got)
+	}
+
+	de, err := c.TemplatesFor(confirmation, signup, "de")
+	if err != nil {
+		t.Fatalf("signup de: %v", err)
+	}
+	if got := renderText(t, de); got != "email confirmation signup de text" {
+		t.Errorf("a language that has a template rendered %q", got)
+	}
+
+	if _, err = c.TemplatesFor(notification, reply, "fr"); err != nil {
+		t.Fatalf("fr: %v", err)
+	}
+	if len(c.items) != 4 {
+		t.Errorf("cache entries = %d, want 4: de and fr sharing the en reply set, plus the signup set of de", len(c.items))
+	}
+}
+
+func TestNoFallbackKeepsTheError(t *testing.T) {
+	c := NewCache(testFS(), Spec{Dir: "email", TextExt: ".eml", HTMLExt: ".html"})
+
+	if _, err := c.TemplatesFor(notification, reply, "de"); err == nil {
+		t.Error("err = nil, want an error without a fallback language")
+	}
+}
+
 func TestConcurrentTemplatesFor(t *testing.T) {
 	c := NewCache(testFS(), EmailSpec)
 

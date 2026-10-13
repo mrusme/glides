@@ -3,7 +3,6 @@ package xmpp
 import (
 	"context"
 
-	goxmpp "github.com/xmppo/go-xmpp"
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 )
 
@@ -58,12 +57,7 @@ func (t *XMPP) SendMessages(
 			return err
 		}
 
-		_, err = t.jabber.Send(goxmpp.Chat{
-			Remote: message.to,
-			Type:   "chat",
-			Text:   message.ToString(),
-		})
-		if err != nil {
+		if err = t.client.Send(message.to, message.ToString()); err != nil {
 			t.rt.Error("failed to send", "xmpp",
 				"error", err)
 			return err
@@ -76,48 +70,49 @@ func (t *XMPP) SendMessages(
 	return nil
 }
 
-func (t *XMPP) ensureConnected() (err error) {
-	if t.jabber == nil {
-		t.rt.Debug("no connection, connecting ...", "xmpp",
-			"host", t.jabberOpts.Host)
-		return t.reconnect()
+func (t *XMPP) ensureConnected() error {
+	if t.client != nil {
+		select {
+		case <-t.client.Done():
+			t.rt.Info("connection ended, reconnecting ...", "xmpp",
+				"host", t.opts.Host)
+		default:
+			err := t.client.Ping()
+			if err == nil {
+				return nil
+			}
+			t.rt.Error("ping failed, reconnecting ...", "xmpp",
+				"error", err)
+		}
+
+		t.disconnect()
 	}
 
-	if _, err = t.jabber.SendKeepAlive(); err != nil {
-		t.rt.Error("failed to SendKeepAlive, attempting reconnect ...", "xmpp",
-			"error", err)
-		return t.reconnect()
-	}
-
-	return nil
+	return t.connect()
 }
 
-func (t *XMPP) reconnect() (err error) {
-	if t.jabber != nil {
-		if err = t.disconnect(); err != nil {
-			return err
-		}
-	}
-
+func (t *XMPP) connect() (err error) {
 	t.rt.Debug("connect to server ...", "xmpp",
-		"host", t.jabberOpts.Host)
+		"host", t.opts.Host)
 
-	t.jabber, err = t.jabberOpts.NewClient()
-	if err != nil {
-		t.jabber = nil
-		t.rt.Error("failed to connect", "xmpp",
-			"error", err)
+	opts := t.opts
+	opts.OnMessage = t.onMessage
+
+	if t.client, err = t.dial(opts); err != nil {
+		t.client = nil
 		return err
 	}
 
 	return nil
 }
 
-func (t *XMPP) disconnect() error {
+func (t *XMPP) disconnect() {
+	if t.client == nil {
+		return
+	}
+
 	t.rt.Debug("close existing client", "xmpp")
 
-	t.jabber.Close()
-	t.jabber = nil
-
-	return nil
+	t.client.Close()
+	t.client = nil
 }

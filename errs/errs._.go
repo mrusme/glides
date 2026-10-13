@@ -90,4 +90,10 @@ var (
 	ErrCronFunctionInvalid error = errors.New(
 		"err_cron_function_invalid",
 	)
+	ErrXMPPClosed error = errors.New(
+		"err_xmpp_closed",
+	)
+	ErrXMPPPingTimeout error = errors.New(
+		"err_xmpp_ping_timeout",
+	)
 )
