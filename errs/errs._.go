@@ -36,6 +36,12 @@ var (
 	ErrUnavailable error = errors.New(
 		"err_unavailable",
 	)
+	ErrRowMismatch error = errors.New(
+		"err_row_mismatch",
+	)
+	ErrDatabaseReadOnly error = errors.New(
+		"err_database_read_only",
+	)
 	ErrHashInvalid error = errors.New(
 		"err_hash_invalid",
 	)

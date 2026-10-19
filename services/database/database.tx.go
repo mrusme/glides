@@ -2,20 +2,17 @@ package database
 
 import (
 	"context"
-	"errors"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"xn--gckvb8fzb.com/glides/errs"
 )
 
 type Tx struct {
 	db *Database
-	tx pgx.Tx
+	tx DriverTx
 }
 
 func (db *Database) Tx(ctx context.Context) (tx *Tx, err error) {
-	if db.pool == nil {
+	if !db.started.Load() {
 		return nil, errs.ErrDatabaseNotStarted
 	}
 
@@ -25,7 +22,7 @@ func (db *Database) Tx(ctx context.Context) (tx *Tx, err error) {
 	tx = new(Tx)
 	tx.db = db
 
-	if tx.tx, err = db.pool.Begin(ctx); err != nil {
+	if tx.tx, err = db.driver.Begin(ctx); err != nil {
 		return nil, err
 	}
 
@@ -36,7 +33,7 @@ func (tx *Tx) Exec(
 	ctx context.Context,
 	sql string,
 	args ...any,
-) (pgconn.CommandTag, error) {
+) (Result, error) {
 	ctx, cancel := tx.db.deadline(ctx)
 	defer cancel()
 
@@ -47,7 +44,7 @@ func (tx *Tx) Query(
 	ctx context.Context,
 	sql string,
 	args ...any,
-) (pgx.Rows, error) {
+) (Cursor, error) {
 	ctx, cancel := tx.db.deadline(ctx)
 
 	result, err := tx.tx.Query(ctx, sql, args...)
@@ -56,33 +53,29 @@ func (tx *Tx) Query(
 		return nil, err
 	}
 
-	return &rows{Rows: result, cancel: cancel}, nil
+	return &cursor{Cursor: result, cancel: cancel}, nil
 }
 
 func (tx *Tx) QueryRow(
 	ctx context.Context,
 	sql string,
 	args ...any,
-) pgx.Row {
+) Scanner {
 	ctx, cancel := tx.db.deadline(ctx)
 
-	return &row{Row: tx.tx.QueryRow(ctx, sql, args...), cancel: cancel}
+	return &scanner{Scanner: tx.tx.QueryRow(ctx, sql, args...), cancel: cancel}
 }
 
-func (tx *Tx) Commit(ctx context.Context) (err error) {
+func (tx *Tx) Commit(ctx context.Context) error {
 	ctx, cancel := tx.db.deadline(ctx)
 	defer cancel()
 
 	return tx.tx.Commit(ctx)
 }
 
-func (tx *Tx) End(ctx context.Context) (err error) {
+func (tx *Tx) End(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tx.db.timeout)
 	defer cancel()
 
-	if err = tx.tx.Rollback(ctx); errors.Is(err, pgx.ErrTxClosed) {
-		return nil
-	}
-
-	return err
+	return tx.tx.Rollback(ctx)
 }

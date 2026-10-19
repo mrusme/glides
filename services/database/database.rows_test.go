@@ -6,8 +6,6 @@ import (
 	"io"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"xn--gckvb8fzb.com/glides/errs"
 )
 
@@ -18,16 +16,16 @@ type probe struct {
 
 type broken struct{}
 
-func (broken) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
-	return pgconn.CommandTag{}, io.EOF
-}
-
-func (broken) Query(context.Context, string, ...any) (pgx.Rows, error) {
+func (broken) Exec(context.Context, string, ...any) (Result, error) {
 	return nil, io.EOF
 }
 
-func (broken) QueryRow(context.Context, string, ...any) pgx.Row {
-	return failedRow{err: io.EOF}
+func (broken) Query(context.Context, string, ...any) (Cursor, error) {
+	return nil, io.EOF
+}
+
+func (broken) QueryRow(context.Context, string, ...any) Scanner {
+	return failedScanner{err: io.EOF}
 }
 
 func TestHelpersConvertTheQueryError(t *testing.T) {
@@ -51,7 +49,7 @@ func TestHelpersConvertTheQueryError(t *testing.T) {
 }
 
 func TestHelpersNeedAStartedDatabase(t *testing.T) {
-	db := &Database{log: quiet()}
+	db := New(nil, new(fakeDriver))
 
 	if _, err := Row[probe](t.Context(), db, "SELECT 1"); !errors.Is(err, errs.ErrDatabaseNotStarted) {
 		t.Errorf("Row = %v, want %v", err, errs.ErrDatabaseNotStarted)
@@ -62,85 +60,77 @@ func TestHelpersNeedAStartedDatabase(t *testing.T) {
 }
 
 func TestHelpersCollectRowsAndValues(t *testing.T) {
-	db := open(t)
+	driver := &fakeDriver{
+		columns:  []string{"n", "twice"},
+		values:   [][]any{{1, 2}, {2, 4}, {3, 6}},
+		affected: 3,
+	}
+	db := started(t, driver)
 	ctx := t.Context()
-	series := `SELECT n, n * 2 AS twice FROM generate_series(1, 3) AS n`
 
-	items, err := Rows[probe](ctx, db, series)
+	items, err := Rows[probe](ctx, db, "series")
 	if err != nil || len(items) != 3 || items[2].Twice != 6 {
 		t.Errorf("Rows = %+v, %v", items, err)
 	}
+	if !driver.cursor.closed {
+		t.Error("Rows left the cursor open")
+	}
 
-	item, err := Row[probe](ctx, db, series+` WHERE n = $1`, 2)
-	if err != nil || item == nil || item.N != 2 || item.Twice != 4 {
+	item, err := Row[probe](ctx, db, "series")
+	if err != nil || item == nil || item.N != 1 || item.Twice != 2 {
 		t.Errorf("Row = %+v, %v", item, err)
 	}
-
-	item, err = Row[probe](ctx, db, series+` WHERE n = $1`, 9)
-	if !errors.Is(err, errs.ErrNoRows) || item != nil {
-		t.Errorf("Row without a match = %+v, %v, want %v", item, err, errs.ErrNoRows)
+	if !driver.cursor.closed {
+		t.Error("Row left the cursor open")
 	}
 
-	none, err := Rows[probe](ctx, db, series+` WHERE n = $1`, 9)
-	if err != nil || none == nil || len(none) != 0 {
-		t.Errorf("Rows without a match = %#v, %v, want an empty slice", none, err)
+	result, err := Exec(ctx, db, "update")
+	if err != nil || result.RowsAffected() != 3 {
+		t.Errorf("Exec = %v, %v", result, err)
 	}
 
-	total, err := Value[int64](ctx, db, `SELECT count(*) FROM generate_series(1, 3)`)
-	if err != nil || total != 3 {
-		t.Errorf("Value = %d, %v", total, err)
-	}
-
-	if _, err = Value[int](ctx, db, `SELECT 1 WHERE false`); !errors.Is(err, errs.ErrNoRows) {
-		t.Errorf("Value without a match = %v, want %v", err, errs.ErrNoRows)
-	}
-
-	numbers, err := Values[int](ctx, db, `SELECT n FROM generate_series(1, 3) AS n`)
+	driver.columns, driver.values = []string{"n"}, [][]any{{1}, {2}, {3}}
+	numbers, err := Values[int](ctx, db, "series")
 	if err != nil || len(numbers) != 3 || numbers[0] != 1 {
 		t.Errorf("Values = %v, %v", numbers, err)
 	}
+	first, err := Value[int](ctx, db, "series")
+	if err != nil || first != 1 {
+		t.Errorf("Value = %d, %v", first, err)
+	}
 
-	if numbers, err = Values[int](ctx, db, `SELECT 1 WHERE false`); err != nil || numbers == nil || len(numbers) != 0 {
+	driver.values = nil
+	none, err := Rows[probe](ctx, db, "series")
+	if err != nil || none == nil || len(none) != 0 {
+		t.Errorf("Rows without a match = %#v, %v, want an empty slice", none, err)
+	}
+	if item, err = Row[probe](ctx, db, "series"); !errors.Is(err, errs.ErrNoRows) || item != nil {
+		t.Errorf("Row without a match = %+v, %v, want %v", item, err, errs.ErrNoRows)
+	}
+	if numbers, err = Values[int](ctx, db, "series"); err != nil || numbers == nil || len(numbers) != 0 {
 		t.Errorf("Values without a match = %#v, %v, want an empty slice", numbers, err)
 	}
-
-	tag, err := Exec(ctx, db, `SELECT 1`)
-	if err != nil || tag.String() != "SELECT 1" {
-		t.Errorf("Exec = %q, %v", tag, err)
-	}
-
-	if _, err = Exec(ctx, db, `SELECT $1::int`, "x"); err == nil || errors.Is(err, errs.ErrUnavailable) {
-		t.Errorf("Exec with a bad argument = %v, want the error of pgx", err)
+	if _, err = Value[int](ctx, db, "series"); !errors.Is(err, errs.ErrNoRows) {
+		t.Errorf("Value without a match = %v, want %v", err, errs.ErrNoRows)
 	}
 }
 
-func TestHelpersRunInsideATransaction(t *testing.T) {
-	db := open(t)
+func TestHelpersReportTheCursorError(t *testing.T) {
+	driver := &fakeDriver{columns: []string{"n", "twice"}, values: [][]any{{1, 2}}, cursorEr: io.EOF}
+	db := started(t, driver)
 	ctx := t.Context()
 
-	tx, err := db.Tx(ctx)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Rows[probe](ctx, db, "series"); !errors.Is(err, errs.ErrUnavailable) || !errors.Is(err, io.EOF) {
+		t.Errorf("Rows = %v, want the cursor's error marked unavailable", err)
 	}
-	defer tx.End(ctx)
-
-	if _, err = Exec(ctx, tx, `CREATE TABLE glides_rows_probe (n int)`); err != nil {
-		t.Fatal(err)
+	if _, err := Row[probe](ctx, db, "series"); !errors.Is(err, errs.ErrUnavailable) {
+		t.Errorf("Row = %v, want the cursor's error marked unavailable", err)
 	}
-	if _, err = Exec(ctx, tx, `INSERT INTO glides_rows_probe VALUES (1), (2)`); err != nil {
-		t.Fatal(err)
+	driver.columns, driver.values = []string{"n"}, [][]any{{1}}
+	if _, err := Values[int](ctx, db, "series"); !errors.Is(err, errs.ErrUnavailable) {
+		t.Errorf("Values = %v, want the cursor's error marked unavailable", err)
 	}
-
-	count, err := Value[int64](ctx, tx, `SELECT count(*) FROM glides_rows_probe`)
-	if err != nil || count != 2 {
-		t.Errorf("Value in the transaction = %d, %v", count, err)
-	}
-
-	if err = tx.End(ctx); err != nil {
-		t.Errorf("End: %v", err)
-	}
-
-	if _, err = Value[int64](ctx, db, `SELECT count(*) FROM glides_rows_probe`); err == nil {
-		t.Error("the table survived the rollback")
+	if _, err := Value[int](ctx, db, "series"); !errors.Is(err, errs.ErrUnavailable) {
+		t.Errorf("Value = %v, want the cursor's error marked unavailable", err)
 	}
 }

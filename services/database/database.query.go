@@ -7,87 +7,84 @@ import (
 	"io"
 	"net"
 
-	"github.com/jackc/pgerrcode"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"xn--gckvb8fzb.com/glides/errs"
 )
 
-type rows struct {
-	pgx.Rows
+type cursor struct {
+	Cursor
 	cancel context.CancelFunc
 }
 
-func (r *rows) Close() {
-	r.Rows.Close()
-	r.cancel()
+func (c *cursor) Close() {
+	c.Cursor.Close()
+	c.cancel()
 }
 
-type row struct {
-	pgx.Row
+type scanner struct {
+	Scanner
 	cancel context.CancelFunc
 }
 
-func (r *row) Scan(dest ...any) error {
-	defer r.cancel()
-	return r.Row.Scan(dest...)
+func (s *scanner) Scan(dest ...any) error {
+	defer s.cancel()
+	return s.Scanner.Scan(dest...)
 }
 
-type failedRow struct {
+type failedScanner struct {
 	err error
 }
 
-func (r failedRow) Scan(...any) error {
-	return r.err
+func (s failedScanner) Scan(...any) error {
+	return s.err
 }
 
 func (db *Database) Exec(
 	ctx context.Context,
 	sql string,
 	args ...any,
-) (pgconn.CommandTag, error) {
-	if db.pool == nil {
-		return pgconn.CommandTag{}, errs.ErrDatabaseNotStarted
+) (Result, error) {
+	if !db.started.Load() {
+		return nil, errs.ErrDatabaseNotStarted
 	}
 
 	ctx, cancel := db.deadline(ctx)
 	defer cancel()
 
-	return db.pool.Exec(ctx, sql, args...)
+	return db.driver.Exec(ctx, sql, args...)
 }
 
 func (db *Database) Query(
 	ctx context.Context,
 	sql string,
 	args ...any,
-) (pgx.Rows, error) {
-	if db.pool == nil {
+) (Cursor, error) {
+	if !db.started.Load() {
 		return nil, errs.ErrDatabaseNotStarted
 	}
 
 	ctx, cancel := db.deadline(ctx)
 
-	result, err := db.pool.Query(ctx, sql, args...)
+	result, err := db.driver.Query(ctx, sql, args...)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
-	return &rows{Rows: result, cancel: cancel}, nil
+	return &cursor{Cursor: result, cancel: cancel}, nil
 }
 
 func (db *Database) QueryRow(
 	ctx context.Context,
 	sql string,
 	args ...any,
-) pgx.Row {
-	if db.pool == nil {
-		return failedRow{err: errs.ErrDatabaseNotStarted}
+) Scanner {
+	if !db.started.Load() {
+		return failedScanner{err: errs.ErrDatabaseNotStarted}
 	}
 
 	ctx, cancel := db.deadline(ctx)
 
-	return &row{Row: db.pool.QueryRow(ctx, sql, args...), cancel: cancel}
+	return &scanner{Scanner: db.driver.QueryRow(ctx, sql, args...), cancel: cancel}
 }
 
 func (db *Database) ConvertError(err error) error {
@@ -95,23 +92,8 @@ func (db *Database) ConvertError(err error) error {
 }
 
 func ConvertError(err error) error {
-	if err == nil {
+	if err == nil || errors.Is(err, errs.ErrUnavailable) {
 		return err
-	}
-
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrNoRows
-	}
-
-	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
-		switch {
-		case pgErr.Code == pgerrcode.UniqueViolation:
-			return fmt.Errorf("%w_%s", errs.ErrUniqueViolationOn, pgErr.ConstraintName)
-		case isUnavailableCode(pgErr.Code):
-			return fmt.Errorf("%w: %w", errs.ErrUnavailable, err)
-		default:
-			return err
-		}
 	}
 
 	if isUnavailable(err) {
@@ -121,24 +103,12 @@ func ConvertError(err error) error {
 	return err
 }
 
-func isUnavailableCode(code string) bool {
-	return pgerrcode.IsConnectionException(code) ||
-		pgerrcode.IsInsufficientResources(code) ||
-		pgerrcode.IsOperatorIntervention(code) ||
-		pgerrcode.IsTransactionRollback(code) ||
-		code == pgerrcode.LockNotAvailable
-}
-
 func isUnavailable(err error) bool {
-	var connectErr *pgconn.ConnectError
 	var netErr net.Error
 
-	return errors.Is(err, errs.ErrUnavailable) ||
-		errors.Is(err, errs.ErrDatabaseNotStarted) ||
+	return errors.Is(err, errs.ErrDatabaseNotStarted) ||
 		errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, io.EOF) ||
 		errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.As(err, &connectErr) ||
-		errors.As(err, &netErr) ||
-		pgconn.Timeout(err)
+		errors.As(err, &netErr)
 }

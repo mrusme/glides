@@ -3,15 +3,8 @@ package database
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"xn--gckvb8fzb.com/glides/errs"
 )
-
-type Executor interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
 
 func Row[T any](
 	ctx context.Context,
@@ -23,9 +16,22 @@ func Row[T any](
 	if err != nil {
 		return nil, ConvertError(err)
 	}
+	defer rows.Close()
 
-	item, err := pgx.CollectOneRow(rows, pgx.RowToAddrOfStructByName[T])
-	if err != nil {
+	if !rows.Next() {
+		if err = rows.Err(); err != nil {
+			return nil, ConvertError(err)
+		}
+		return nil, errs.ErrNoRows
+	}
+
+	item := new(T)
+	if err = scanStruct(rows, item); err != nil {
+		return nil, ConvertError(err)
+	}
+
+	rows.Close()
+	if err = rows.Err(); err != nil {
 		return nil, ConvertError(err)
 	}
 
@@ -42,9 +48,18 @@ func Rows[T any](
 	if err != nil {
 		return nil, ConvertError(err)
 	}
+	defer rows.Close()
 
-	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[T])
-	if err != nil {
+	items := []T{}
+	for rows.Next() {
+		var item T
+		if err = scanStruct(rows, &item); err != nil {
+			return nil, ConvertError(err)
+		}
+		items = append(items, item)
+	}
+
+	if err = rows.Err(); err != nil {
 		return nil, ConvertError(err)
 	}
 
@@ -63,9 +78,22 @@ func Value[T any](
 	if err != nil {
 		return zero, ConvertError(err)
 	}
+	defer rows.Close()
 
-	value, err := pgx.CollectOneRow(rows, pgx.RowTo[T])
-	if err != nil {
+	if !rows.Next() {
+		if err = rows.Err(); err != nil {
+			return zero, ConvertError(err)
+		}
+		return zero, errs.ErrNoRows
+	}
+
+	var value T
+	if err = rows.Scan(&value); err != nil {
+		return zero, ConvertError(err)
+	}
+
+	rows.Close()
+	if err = rows.Err(); err != nil {
 		return zero, ConvertError(err)
 	}
 
@@ -82,9 +110,18 @@ func Values[T any](
 	if err != nil {
 		return nil, ConvertError(err)
 	}
+	defer rows.Close()
 
-	values, err := pgx.CollectRows(rows, pgx.RowTo[T])
-	if err != nil {
+	values := []T{}
+	for rows.Next() {
+		var value T
+		if err = rows.Scan(&value); err != nil {
+			return nil, ConvertError(err)
+		}
+		values = append(values, value)
+	}
+
+	if err = rows.Err(); err != nil {
 		return nil, ConvertError(err)
 	}
 
@@ -96,8 +133,8 @@ func Exec(
 	ex Executor,
 	sql string,
 	args ...any,
-) (pgconn.CommandTag, error) {
-	tag, err := ex.Exec(ctx, sql, args...)
+) (Result, error) {
+	result, err := ex.Exec(ctx, sql, args...)
 
-	return tag, ConvertError(err)
+	return result, ConvertError(err)
 }
