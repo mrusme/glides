@@ -81,6 +81,8 @@ func dsn(opts Options) string {
 	q := url.Values{}
 	q.Set("_busy_timeout", strconv.FormatInt(database.DefaultTimeout.Milliseconds(), 10))
 	q.Set("_foreign_keys", "1")
+	q.Set("_time_format", "sqlite")
+	q.Set("_timezone", "UTC")
 
 	name := pathEscaper.Replace(opts.Path)
 	switch {

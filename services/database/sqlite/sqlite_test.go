@@ -343,7 +343,7 @@ func TestReadOnly(t *testing.T) {
 	}
 }
 
-func TestTimestampTextOrdersByZoneNotByInstant(t *testing.T) {
+func TestTimesAreStoredInUTCAndOrderByInstant(t *testing.T) {
 	db := start(t, Options{InMemory: true})
 	ctx := t.Context()
 
@@ -351,7 +351,7 @@ func TestTimestampTextOrdersByZoneNotByInstant(t *testing.T) {
 		t.Fatal(err)
 	}
 	noon := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
-	elsewhere := time.Date(2026, 10, 19, 14, 0, 0, 0, time.FixedZone("CEST", 2*3600))
+	elsewhere := time.Date(2026, 10, 19, 13, 30, 0, 0, time.FixedZone("CEST", 2*3600))
 	for _, at := range []time.Time{noon.Add(750 * time.Millisecond), noon.Add(700 * time.Millisecond), noon.Add(time.Second), elsewhere} {
 		if _, err := database.Exec(ctx, db, `INSERT INTO times (at, ms) VALUES ($1, $2)`, at, at.UnixMilli()); err != nil {
 			t.Fatal(err)
@@ -359,21 +359,28 @@ func TestTimestampTextOrdersByZoneNotByInstant(t *testing.T) {
 	}
 
 	stored, err := database.Value[string](ctx, db, `SELECT CAST(at AS TEXT) FROM times WHERE ms = $1`, noon.Add(700*time.Millisecond).UnixMilli())
-	if err != nil || stored != "2026-10-19 12:00:00.7 +0000 UTC" {
+	if err != nil || stored != "2026-10-19 12:00:00.7+00:00" {
 		t.Errorf("the driver stored %q, %v", stored, err)
 	}
-
-	byText, err := database.Values[int64](ctx, db, `SELECT ms FROM times ORDER BY at`)
-	want := []int64{noon.Add(700 * time.Millisecond).UnixMilli(), noon.Add(750 * time.Millisecond).UnixMilli(), noon.Add(time.Second).UnixMilli(), elsewhere.UnixMilli()}
-	if err != nil || !reflect.DeepEqual(byText, want) {
-		t.Errorf("ORDER BY the text column = %v, %v, want the UTC values in order and the CEST value last although it is the earliest", byText, err)
+	if stored, err = database.Value[string](ctx, db, `SELECT CAST(at AS TEXT) FROM times WHERE ms = $1`, elsewhere.UnixMilli()); err != nil || stored != "2026-10-19 11:30:00+00:00" {
+		t.Errorf("the driver stored a zoned time as %q, %v", stored, err)
 	}
-	byInteger, err := database.Values[int64](ctx, db, `SELECT ms FROM times ORDER BY ms`)
-	if err != nil || byInteger[0] != elsewhere.UnixMilli() || byInteger[1] != want[0] {
-		t.Errorf("ORDER BY the integer column = %v, %v, want the CEST value first", byInteger, err)
+
+	want := []int64{elsewhere.UnixMilli(), noon.Add(700 * time.Millisecond).UnixMilli(), noon.Add(750 * time.Millisecond).UnixMilli(), noon.Add(time.Second).UnixMilli()}
+	byText, err := database.Values[int64](ctx, db, `SELECT ms FROM times ORDER BY at`)
+	if err != nil || !reflect.DeepEqual(byText, want) {
+		t.Errorf("ORDER BY the time column = %v, %v, want the order of the instants %v", byText, err, want)
+	}
+	between, err := database.Value[int64](ctx, db, `SELECT count(*) FROM times WHERE at BETWEEN $1 AND $2`, elsewhere, noon.Add(750*time.Millisecond))
+	if err != nil || between != 3 {
+		t.Errorf("BETWEEN two times = %d, %v, want 3", between, err)
+	}
+	month, err := database.Value[string](ctx, db, `SELECT strftime('%Y-%m', at) FROM times WHERE ms = $1`, elsewhere.UnixMilli())
+	if err != nil || month != "2026-10" {
+		t.Errorf("strftime on the column = %q, %v", month, err)
 	}
 	back, err := database.Value[time.Time](ctx, db, `SELECT at FROM times WHERE ms = $1`, elsewhere.UnixMilli())
-	if err != nil || !back.Equal(elsewhere) {
-		t.Errorf("the zoned time reads back as %v, %v", back, err)
+	if err != nil || !back.Equal(elsewhere) || back.Location() != time.UTC {
+		t.Errorf("the zoned time reads back as %v in %v, %v, want the instant in UTC", back, back.Location(), err)
 	}
 }
