@@ -42,6 +42,9 @@ var (
 	ErrDatabaseReadOnly error = errors.New(
 		"err_database_read_only",
 	)
+	ErrDatabaseOptionsInvalid error = errors.New(
+		"err_database_options_invalid",
+	)
 	ErrHashInvalid error = errors.New(
 		"err_hash_invalid",
 	)

@@ -28,6 +28,7 @@ type Dialect struct {
 	TableCount     string
 	CreateProbe    string
 	MigrationsPath string
+	InMemory       bool
 }
 
 type probe struct {
@@ -343,7 +344,13 @@ func migrations(t *testing.T, open Opener, d Dialect) {
 	if err := db.Startup(); err != nil {
 		t.Fatalf("Startup with the migration applied: %v", err)
 	}
-	n, err := database.Value[int](ctx, db, `SELECT n FROM dbtest_migrated`)
+	n, err := database.Value[int64](ctx, db, `SELECT count(*) FROM dbtest_migrated`)
+	if d.InMemory {
+		if err != nil || n != 0 {
+			t.Errorf("the table was not created again for a database that forgets: %d, %v", n, err)
+		}
+		return
+	}
 	if err != nil || n != 1 {
 		t.Errorf("the row did not survive the second Startup: %d, %v", n, err)
 	}
