@@ -12,6 +12,7 @@ import (
 	"xn--gckvb8fzb.com/glides/errs"
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 	"xn--gckvb8fzb.com/glides/runtime"
+	"xn--gckvb8fzb.com/glides/worker/targets/handler"
 )
 
 func testRuntime(t *testing.T, targets string) *runtime.Runtime {
@@ -107,6 +108,48 @@ func TestRegisterSeesEveryTargetAndExecuteRoutesByID(t *testing.T) {
 	if err = ts.LoadAll(); err != nil {
 		t.Errorf("LoadAll = %v", err)
 	}
+	if ok, failures := ts.ShutdownAll(); !ok {
+		t.Errorf("ShutdownAll = %v", failures)
+	}
+}
+
+func TestNewBuildsAHandlerTargetWithoutTheTemplatesEmbed(t *testing.T) {
+	rt := testRuntime(t, "[[Target]]\nID = \"jobs\"\nType = \"handler\"\n")
+
+	const thumbnails asyncjob.JobType = "thumbnails"
+	const run asyncjob.JobSubType = "run"
+
+	var ran bool
+	ts, err := New(rt, func(id string, target ITarget) error {
+		h, ok := target.(*handler.Target)
+		if !ok {
+			t.Errorf("target %q is a %T, want a *handler.Target", id, target)
+			return nil
+		}
+		h.Handle(thumbnails, run, func(ctx context.Context, j asyncjob.AsyncJob) error {
+			ran = true
+			return nil
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err = ts.LoadAll(); err != nil {
+		t.Errorf("LoadAll = %v", err)
+	}
+	if err = ts.RunAll(); err != nil {
+		t.Errorf("RunAll = %v", err)
+	}
+
+	if err = ts.Execute(context.Background(), "jobs", asyncjob.AsyncJob{Type: thumbnails, SubType: run}); err != nil {
+		t.Errorf("Execute = %v", err)
+	}
+	if !ran {
+		t.Error("the handler registered through Register did not run")
+	}
+
 	if ok, failures := ts.ShutdownAll(); !ok {
 		t.Errorf("ShutdownAll = %v", failures)
 	}

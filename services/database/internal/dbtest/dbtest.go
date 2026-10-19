@@ -45,6 +45,7 @@ func Run(t *testing.T, open Opener, d Dialect) {
 	t.Run("Placeholders", func(t *testing.T) { placeholders(t, open) })
 	t.Run("Queries", func(t *testing.T) { queries(t, open) })
 	t.Run("Helpers", func(t *testing.T) { helpers(t, open) })
+	t.Run("EarlyClose", func(t *testing.T) { earlyClose(t, open) })
 	t.Run("Table", func(t *testing.T) { table(t, open, d) })
 	t.Run("Transactions", func(t *testing.T) { transactions(t, open, d) })
 	t.Run("Deadline", func(t *testing.T) { deadline(t, open, d) })
@@ -159,6 +160,45 @@ func queries(t *testing.T, open Opener) {
 	}
 	if _, err = db.Query(gone, `SELECT 1`); err == nil {
 		t.Error("a query ran under a context that was cancelled")
+	}
+}
+
+func earlyClose(t *testing.T, open Opener) {
+	db := start(t, open, Options{})
+	ctx := t.Context()
+
+	tx, err := db.Tx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.End(ctx)
+
+	for name, ex := range map[string]database.Executor{"database": db, "transaction": tx} {
+		for round := range 40 {
+			rows, err := ex.Query(ctx, series)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if !rows.Next() {
+				t.Fatalf("%s: no first row: %v", name, rows.Err())
+			}
+			var n, twice int
+			if err = rows.Scan(&n, &twice); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			rows.Close()
+			time.Sleep(time.Millisecond)
+			if err = rows.Err(); err != nil {
+				t.Fatalf("%s: Err after closing the cursor at its first row, round %d = %v, want nil",
+					name, round, err)
+			}
+		}
+
+		for round := range 40 {
+			if _, err = database.Value[int64](ctx, ex, `SELECT n FROM (`+series+`) AS s`); err != nil {
+				t.Fatalf("%s: Value, round %d = %v", name, round, err)
+			}
+		}
 	}
 }
 

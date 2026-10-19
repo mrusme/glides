@@ -3,9 +3,10 @@ package config
 import "log/slog"
 
 const (
-	TargetTypeEmail string = "email"
-	TargetTypeXMPP  string = "xmpp"
-	TargetTypeDebug string = "debug"
+	TargetTypeEmail   string = "email"
+	TargetTypeXMPP    string = "xmpp"
+	TargetTypeDebug   string = "debug"
+	TargetTypeHandler string = "handler"
 )
 
 type Target struct {

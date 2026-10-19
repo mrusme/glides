@@ -10,6 +10,7 @@ import (
 	"xn--gckvb8fzb.com/glides/services/config"
 	"xn--gckvb8fzb.com/glides/worker/targets/debug"
 	"xn--gckvb8fzb.com/glides/worker/targets/email"
+	"xn--gckvb8fzb.com/glides/worker/targets/handler"
 	"xn--gckvb8fzb.com/glides/worker/targets/xmpp"
 )
 
@@ -41,6 +42,8 @@ func NewTarget(
 		t, err = xmpp.New(rt, def)
 	case config.TargetTypeDebug:
 		t, err = debug.New(rt, def)
+	case config.TargetTypeHandler:
+		t, err = handler.New(rt, def)
 	default:
 		return nil, fmt.Errorf("%w: %s", errs.ErrNoSuchTargetType, def.Type)
 	}

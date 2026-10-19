@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hibiken/asynq"
 	"xn--gckvb8fzb.com/glides/errs"
 	"xn--gckvb8fzb.com/glides/models/asyncjob"
 	"xn--gckvb8fzb.com/glides/services/config"
@@ -199,5 +200,27 @@ func TestBatchReportsPayloadsWithoutATarget(t *testing.T) {
 		func(string) bool { return false })
 	if !errors.Is(err, errs.ErrDispatchNotStarted) {
 		t.Errorf("Batch with an email target = %v, want the enqueue to be reached", err)
+	}
+}
+
+func TestQueueOfTakesTheLastQueueOption(t *testing.T) {
+	if got := queueOf(nil); got != QueueDefault {
+		t.Errorf("queueOf without options = %q, want %q", got, QueueDefault)
+	}
+
+	opts := []asynq.Option{asynq.Queue("media"), asynq.MaxRetry(1), asynq.Queue("cron")}
+	if got := queueOf(opts); got != "cron" {
+		t.Errorf("queueOf(%v) = %q, want the last queue, cron", opts, got)
+	}
+}
+
+func TestJobUniqueBeforeStartupIsNotStarted(t *testing.T) {
+	disp, err := New(config.Redis{}, config.Targets{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err = disp.JobUnique(asyncjob.New("t", "type", "sub"), "id"); !errors.Is(err, errs.ErrDispatchNotStarted) {
+		t.Errorf("JobUnique before Startup = %v, want %v", err, errs.ErrDispatchNotStarted)
 	}
 }

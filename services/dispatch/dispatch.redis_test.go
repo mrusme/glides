@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -154,5 +155,95 @@ func TestCronRunIsEnqueuedOncePerSchedule(t *testing.T) {
 	}
 	if runs != 1 {
 		t.Errorf("%d tasks for the schedule, want 1", runs)
+	}
+}
+
+func TestJobUniqueKeepsAQueuedTaskAndReplacesAFinishedOne(t *testing.T) {
+	cfg, inspector := live(t)
+	disp := started(t, cfg)
+
+	queue := fmt.Sprintf("glides-test-%d", time.Now().UnixNano())
+	t.Cleanup(func() { inspector.DeleteQueue(queue, true) })
+	const id = "unique"
+
+	held := func() (asynq.TaskState, string) {
+		t.Helper()
+
+		info, err := inspector.GetTaskInfo(queue, id)
+		if err != nil {
+			t.Fatalf("GetTaskInfo: %v", err)
+		}
+		var got asyncjob.AsyncJob
+		if err = json.Unmarshal(info.Payload, &got); err != nil {
+			t.Fatalf("payload: %v", err)
+		}
+
+		return info.State, got.ID.String()
+	}
+	newJob := func() *asyncjob.AsyncJob {
+		return asyncjob.New("glides-test-target", "glides-test", "unique")
+	}
+
+	first := newJob()
+	if err := disp.JobUnique(first, id, asynq.Queue(queue)); err != nil {
+		t.Fatalf("JobUnique: %v", err)
+	}
+	if err := disp.JobUnique(newJob(), id, asynq.Queue(queue)); err != nil {
+		t.Fatalf("JobUnique while the task is pending = %v, want nil", err)
+	}
+	if state, jobID := held(); state != asynq.TaskStatePending || jobID != first.ID.String() {
+		t.Errorf("the task is %v holding job %s, want the first job %s still pending", state, jobID, first.ID)
+	}
+
+	if err := inspector.ArchiveTask(queue, id); err != nil {
+		t.Fatalf("ArchiveTask: %v", err)
+	}
+	if err := disp.Job(newJob(), asynq.Queue(queue), asynq.TaskID(id)); !errors.Is(err, asynq.ErrTaskIDConflict) {
+		t.Errorf("Job with the id of an archived task = %v, want %v", err, asynq.ErrTaskIDConflict)
+	}
+	retried := newJob()
+	if err := disp.JobUnique(retried, id, asynq.Queue(queue)); err != nil {
+		t.Fatalf("JobUnique while the task is archived: %v", err)
+	}
+	if state, jobID := held(); state != asynq.TaskStatePending || jobID != retried.ID.String() {
+		t.Errorf("the task is %v holding job %s, want the new job %s pending", state, jobID, retried.ID)
+	}
+
+	if err := inspector.DeleteTask(queue, id); err != nil {
+		t.Fatalf("DeleteTask: %v", err)
+	}
+	if err := disp.JobUnique(newJob(), id, asynq.Queue(queue), asynq.Retention(time.Hour)); err != nil {
+		t.Fatalf("JobUnique with a retention: %v", err)
+	}
+
+	srv := asynq.NewServer(RedisConnOpt(cfg), asynq.Config{
+		Queues:      map[string]int{queue: 1},
+		Concurrency: 1,
+		LogLevel:    asynq.FatalLevel,
+	})
+	mux := asynq.NewServeMux()
+	mux.HandleFunc(TaskJob, func(ctx context.Context, task *asynq.Task) error { return nil })
+	if err := srv.Start(mux); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if state, _ := held(); state == asynq.TaskStateCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			srv.Shutdown()
+			t.Fatal("the task did not complete within 10 seconds")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	srv.Shutdown()
+
+	again := newJob()
+	if err := disp.JobUnique(again, id, asynq.Queue(queue)); err != nil {
+		t.Fatalf("JobUnique while a completed task is retained: %v", err)
+	}
+	if state, jobID := held(); state != asynq.TaskStatePending || jobID != again.ID.String() {
+		t.Errorf("the task is %v holding job %s, want the new job %s pending", state, jobID, again.ID)
 	}
 }

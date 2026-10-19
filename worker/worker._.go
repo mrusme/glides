@@ -20,11 +20,12 @@ type Worker struct {
 	ts       *targets.Targets
 	register targets.Register
 
-	mu       sync.Mutex
-	as       *asynq.Server
-	running  bool
-	stop     chan struct{}
-	stopOnce sync.Once
+	mu          sync.Mutex
+	as          *asynq.Server
+	concurrency int
+	running     bool
+	stop        chan struct{}
+	stopOnce    sync.Once
 }
 
 func New(
@@ -38,6 +39,12 @@ func New(
 	wrk.stop = make(chan struct{})
 
 	return wrk, nil
+}
+
+func (wrk *Worker) SetConcurrency(n int) {
+	wrk.mu.Lock()
+	wrk.concurrency = n
+	wrk.mu.Unlock()
 }
 
 func (wrk *Worker) Startup() (err error) {
@@ -78,7 +85,8 @@ func (wrk *Worker) Run() (err error) {
 	as := asynq.NewServer(
 		dispatch.RedisConnOpt(redisCfg),
 		asynq.Config{
-			Logger: wrk.rt.ALogger,
+			Logger:      wrk.rt.ALogger,
+			Concurrency: wrk.concurrency,
 		},
 	)
 	mux := asynq.NewServeMux()

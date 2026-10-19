@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -38,6 +39,7 @@ type Dispatch struct {
 	targets  config.Targets
 	resolver Resolver
 	ac       *asynq.Client
+	ai       *asynq.Inspector
 }
 
 func New(
@@ -96,6 +98,8 @@ func (disp *Dispatch) Startup() (err error) {
 		return err
 	}
 
+	disp.ai = asynq.NewInspector(RedisConnOpt(disp.cfg))
+
 	return nil
 }
 
@@ -106,6 +110,11 @@ func (disp *Dispatch) Shutdown() (err error) {
 
 	err = disp.ac.Close()
 	disp.ac = nil
+
+	if disp.ai != nil {
+		err = errors.Join(err, disp.ai.Close())
+		disp.ai = nil
+	}
 
 	return err
 }

@@ -22,6 +22,8 @@ type executor interface {
 type rows struct {
 	*sql.Rows
 	columns []string
+	closed  bool
+	err     error
 }
 
 func (r *rows) Columns() []string {
@@ -33,11 +35,23 @@ func (r *rows) Scan(dest ...any) error {
 }
 
 func (r *rows) Err() error {
+	if r.closed {
+		return ConvertError(r.err)
+	}
+
 	return ConvertError(r.Rows.Err())
 }
 
 func (r *rows) Close() {
-	r.Rows.Close()
+	if r.closed {
+		return
+	}
+	r.closed = true
+
+	r.err = r.Rows.Err()
+	if err := r.Rows.Close(); r.err == nil {
+		r.err = err
+	}
 }
 
 type row struct {
