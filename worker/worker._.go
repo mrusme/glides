@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/hibiken/asynq"
@@ -23,6 +24,7 @@ type Worker struct {
 	mu          sync.Mutex
 	as          *asynq.Server
 	concurrency int
+	queues      map[string]int
 	running     bool
 	stop        chan struct{}
 	stopOnce    sync.Once
@@ -44,6 +46,12 @@ func New(
 func (wrk *Worker) SetConcurrency(n int) {
 	wrk.mu.Lock()
 	wrk.concurrency = n
+	wrk.mu.Unlock()
+}
+
+func (wrk *Worker) SetQueues(queues map[string]int) {
+	wrk.mu.Lock()
+	wrk.queues = maps.Clone(queues)
 	wrk.mu.Unlock()
 }
 
@@ -87,6 +95,7 @@ func (wrk *Worker) Run() (err error) {
 		asynq.Config{
 			Logger:      wrk.rt.ALogger,
 			Concurrency: wrk.concurrency,
+			Queues:      wrk.queues,
 		},
 	)
 	mux := asynq.NewServeMux()

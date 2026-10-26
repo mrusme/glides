@@ -197,3 +197,97 @@ func mostJobsInFlight(t *testing.T, addr string, concurrency int, jobs int) int6
 
 	return most.Load()
 }
+
+func TestSetQueuesServesTheNamedQueues(t *testing.T) {
+	addr := os.Getenv(envRedis)
+	if addr == "" {
+		t.Skipf("%s is not set", envRedis)
+	}
+
+	rt := testRuntime(t, fmt.Sprintf("[Redis]\nAddresses = [%q]\nDatabase = %d\n%s",
+		addr, redisDatabase, handlerTarget))
+
+	redisCfg, err := rt.Config().Redis()
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetsCfg, err := rt.Config().Targets()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	suffix := time.Now().UnixNano()
+	queues := []string{fmt.Sprintf("glides-test-a-%d", suffix), fmt.Sprintf("glides-test-b-%d", suffix)}
+	inspector := asynq.NewInspector(dispatch.RedisConnOpt(redisCfg))
+	t.Cleanup(func() {
+		for _, q := range queues {
+			if err := inspector.DeleteQueue(q, true); err != nil && !errors.Is(err, asynq.ErrQueueNotFound) {
+				t.Errorf("deleting queue %s: %v", q, err)
+			}
+		}
+		inspector.Close()
+	})
+
+	jobType := asyncjob.JobType(fmt.Sprintf("glides-test-%d", suffix))
+	const run asyncjob.JobSubType = "run"
+	done := make(chan string, len(queues))
+
+	wrk, err := New(rt, func(id string, target targets.ITarget) error {
+		if h, ok := target.(*handler.Target); ok {
+			h.Handle(jobType, run, func(ctx context.Context, j asyncjob.AsyncJob) error {
+				queue, _ := asynq.GetQueueName(ctx)
+				done <- queue
+				return nil
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrk.SetQueues(map[string]int{queues[0]: 2, queues[1]: 1})
+
+	disp, err := dispatch.New(redisCfg, targetsCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = disp.Startup(); err != nil {
+		t.Fatalf("dispatch Startup: %v", err)
+	}
+	t.Cleanup(func() { disp.Shutdown() })
+
+	for _, q := range queues {
+		if err = disp.Job(asyncjob.New("jobs", jobType, run), asynq.Queue(q)); err != nil {
+			t.Fatalf("Job into %s: %v", q, err)
+		}
+	}
+
+	if err = wrk.Startup(); err != nil {
+		t.Fatalf("worker Startup: %v", err)
+	}
+	ran := make(chan error, 1)
+	go func() { ran <- wrk.Run() }()
+
+	var served []string
+	timeout := time.After(20 * time.Second)
+	for range queues {
+		select {
+		case q := <-done:
+			served = append(served, q)
+		case <-timeout:
+			wrk.Shutdown()
+			t.Fatalf("the jobs did not run within 20 seconds, served %v", served)
+		}
+	}
+	slices.Sort(served)
+	if !slices.Equal(served, queues) {
+		t.Errorf("served %v, want %v", served, queues)
+	}
+
+	if err = wrk.Shutdown(); err != nil {
+		t.Errorf("Shutdown = %v", err)
+	}
+	if err = <-ran; err != nil {
+		t.Errorf("Run = %v", err)
+	}
+}
